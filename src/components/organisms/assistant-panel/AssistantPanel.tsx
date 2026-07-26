@@ -8,6 +8,7 @@ import {
 } from "react";
 
 import {
+  LoaderCircle,
   Trash2,
   X,
 } from "lucide-react";
@@ -60,6 +61,11 @@ export function AssistantPanel({
   const [inputValue, setInputValue] =
     useState("");
 
+  const [
+    isPanelReady,
+    setIsPanelReady,
+  ] = useState(false);
+
   const {
     isLoading,
     messages,
@@ -75,6 +81,7 @@ export function AssistantPanel({
     getAssistantSuggestions(locale);
 
   const handleClose = useCallback((): void => {
+    setIsPanelReady(false);
     clearError();
     onClose();
   }, [
@@ -153,13 +160,23 @@ export function AssistantPanel({
       clearMessages();
     };
 
-  const handleBackdropClick = (): void => {
-    if (!closeOnBackdrop) {
-      return;
-    }
+  const handleBackdropClick =
+    (): void => {
+      if (!closeOnBackdrop) {
+        return;
+      }
 
-    handleClose();
-  };
+      handleClose();
+    };
+
+  const handlePanelAnimationComplete =
+    (): void => {
+      if (!isOpen) {
+        return;
+      }
+
+      setIsPanelReady(true);
+    };
 
   const status = error
     ? "error"
@@ -180,6 +197,11 @@ export function AssistantPanel({
   const hasConversation =
     messages.length > 0;
 
+  const panelOpenDelay =
+    prefersReducedMotion
+      ? 0
+      : 1.5;
+
   return (
     <AnimatePresence initial={false}>
       {isOpen ? (
@@ -189,13 +211,9 @@ export function AssistantPanel({
             "fixed inset-0 z-[80]",
             "pointer-events-none",
           )}
-          initial={
-            prefersReducedMotion
-              ? false
-              : {
-                  opacity: 0,
-                }
-          }
+          initial={{
+            opacity: 1,
+          }}
           animate={{
             opacity: 1,
           }}
@@ -206,7 +224,7 @@ export function AssistantPanel({
             duration:
               prefersReducedMotion
                 ? 0
-                : 0.2,
+                : 0.18,
             ease: "easeOut",
           }}
         >
@@ -253,6 +271,110 @@ export function AssistantPanel({
             />
           ) : null}
 
+          {!prefersReducedMotion ? (
+            <motion.div
+              aria-hidden="true"
+              className={cn(
+                "pointer-events-none",
+
+                "absolute top-1/2 left-1/2",
+                "z-[2]",
+
+                "-translate-x-1/2",
+                "-translate-y-1/2",
+              )}
+              initial={{
+                opacity: 0,
+                scale: 0.9,
+                y: 8,
+              }}
+              animate={{
+                opacity: [
+                  0,
+                  1,
+                  1,
+                  0,
+                ],
+                scale: [
+                  0.9,
+                  1,
+                  1,
+                  0.96,
+                ],
+                y: [
+                  8,
+                  0,
+                  0,
+                  -4,
+                ],
+              }}
+              transition={{
+                duration: 1.65,
+                times: [
+                  0,
+                  0.12,
+                  0.86,
+                  1,
+                ],
+                ease: "easeOut",
+              }}
+            >
+              <div
+                className={cn(
+                  "flex items-center gap-2.5",
+                  "rounded-full",
+
+                  "border border-[#393939]/12",
+                  "bg-[#fdfefe]/95",
+                  "px-4 py-2.5",
+
+                  "text-xs font-semibold",
+                  "text-[#303530]",
+
+                  "shadow-[0_16px_45px_rgba(12,15,12,0.18)]",
+
+                  "supports-[backdrop-filter]:bg-[#fdfefe]/85",
+                  "supports-[backdrop-filter]:backdrop-blur-xl",
+
+                  "dark:border-white/12",
+                  "dark:bg-[#111511]/95",
+                  "dark:text-[#edf0ed]",
+
+                  "dark:shadow-[0_18px_50px_rgba(0,0,0,0.50)]",
+
+                  "dark:supports-[backdrop-filter]:bg-[#111511]/85",
+                )}
+              >
+                <span
+                  className={cn(
+                    "flex size-8",
+                    "items-center justify-center",
+                    "rounded-full",
+
+                    "bg-[#4ead35]",
+                    "text-[#0c0f0c]",
+
+                    "shadow-[0_6px_18px_rgba(78,173,53,0.28)]",
+
+                    "dark:bg-[#57af33]",
+                  )}
+                >
+                  <LoaderCircle
+                    aria-hidden="true"
+                    className="size-4 animate-spin"
+                    strokeWidth={2}
+                  />
+                </span>
+
+                <span>
+                  {locale === "es"
+                    ? "Abriendo asistente..."
+                    : "Opening assistant..."}
+                </span>
+              </div>
+            </motion.div>
+          ) : null}
+
           <motion.div
             className={cn(
               "pointer-events-auto",
@@ -278,7 +400,8 @@ export function AssistantPanel({
                     opacity: 0,
                     x: -18,
                     y: 18,
-                    scale: 0.97,
+                    scale: 0.965,
+                    filter: "blur(6px)",
                   }
             }
             animate={{
@@ -286,24 +409,36 @@ export function AssistantPanel({
               x: 0,
               y: 0,
               scale: 1,
+              filter: "blur(0px)",
             }}
-            exit={
-              prefersReducedMotion
-                ? {
-                    opacity: 0,
-                  }
-                : {
-                    opacity: 0,
-                    x: -14,
-                    y: 16,
-                    scale: 0.98,
-                  }
-            }
+            exit={{
+              opacity: 0,
+              x: prefersReducedMotion
+                ? 0
+                : -14,
+              y: prefersReducedMotion
+                ? 0
+                : 16,
+              scale: prefersReducedMotion
+                ? 1
+                : 0.98,
+              filter: prefersReducedMotion
+                ? "blur(0px)"
+                : "blur(4px)",
+              transition: {
+                duration:
+                  prefersReducedMotion
+                    ? 0
+                    : 0.18,
+                ease: "easeIn",
+              },
+            }}
             transition={{
+              delay: panelOpenDelay,
               duration:
                 prefersReducedMotion
                   ? 0
-                  : 0.28,
+                  : 0.32,
               ease: [
                 0.22,
                 1,
@@ -311,6 +446,9 @@ export function AssistantPanel({
                 1,
               ],
             }}
+            onAnimationComplete={
+              handlePanelAnimationComplete
+            }
           >
             <section
               {...sectionProps}
@@ -523,31 +661,38 @@ export function AssistantPanel({
                 </button>
               </header>
 
-              <AssistantChatTemplate
-                locale={locale}
-                copy={copy}
-                messages={messages}
-                suggestions={
-                  suggestions
-                }
-                inputValue={
-                  inputValue
-                }
-                onInputValueChange={
-                  setInputValue
-                }
-                onSubmitMessage={
-                  handleSubmitMessage
-                }
-                onSuggestionSelect={
-                  handleSuggestionSelect
-                }
-                isLoading={
-                  isLoading
-                }
-                error={error}
-                showSuggestions
-              />
+              {isPanelReady ? (
+                <AssistantChatTemplate
+                  locale={locale}
+                  copy={copy}
+                  messages={messages}
+                  suggestions={
+                    suggestions
+                  }
+                  inputValue={
+                    inputValue
+                  }
+                  onInputValueChange={
+                    setInputValue
+                  }
+                  onSubmitMessage={
+                    handleSubmitMessage
+                  }
+                  onSuggestionSelect={
+                    handleSuggestionSelect
+                  }
+                  isLoading={
+                    isLoading
+                  }
+                  error={error}
+                  showSuggestions
+                />
+              ) : (
+                <div
+                  aria-hidden="true"
+                  className="min-h-0 flex-1"
+                />
+              )}
             </section>
           </motion.div>
         </motion.div>
