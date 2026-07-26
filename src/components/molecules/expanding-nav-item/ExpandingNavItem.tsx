@@ -1,6 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import {
+  useState,
+  type FocusEvent,
+} from "react";
 import {
   AnimatePresence,
   motion,
@@ -18,14 +21,14 @@ const COLLAPSED_WIDTH = 52;
 
 const EXPANDED_WIDTHS: Record<NavigationItemId, number> = {
   home: 108,
-  about: 145,
-  "graphic-resources": 175,
-  "software-licenses": 188,
+  about: 150,
+  "graphic-resources": 196,
+  "software-licenses": 222,
   hardware: 132,
-  "technical-services": 175,
-  "remote-support": 165,
-  "plans-promotions": 200,
-  "help-center": 165,
+  "technical-services": 202,
+  "remote-support": 176,
+  "plans-promotions": 216,
+  "help-center": 176,
   contact: 132,
 };
 
@@ -41,10 +44,31 @@ export function ExpandingNavItem({
   const prefersReducedMotion = useReducedMotion();
 
   const [isHovered, setIsHovered] = useState(false);
-  const [isFocused, setIsFocused] = useState(false);
+  const [isKeyboardFocused, setIsKeyboardFocused] =
+    useState(false);
 
-  const isExpanded = isHovered || isFocused;
+  const isExpanded = isHovered || isKeyboardFocused;
   const expandedWidth = EXPANDED_WIDTHS[item.id];
+
+  const handleFocus = (
+    event: FocusEvent<HTMLAnchorElement>,
+  ): void => {
+    const element = event.currentTarget;
+
+    requestAnimationFrame(() => {
+      if (document.activeElement !== element) {
+        return;
+      }
+
+      setIsKeyboardFocused(
+        element.matches(":focus-visible"),
+      );
+    });
+  };
+
+  const handleBlur = (): void => {
+    setIsKeyboardFocused(false);
+  };
 
   const handleNavigate = (): void => {
     onNavigate?.();
@@ -66,11 +90,11 @@ export function ExpandingNavItem({
         width: isExpanded
           ? `${expandedWidth}px`
           : `${COLLAPSED_WIDTH}px`,
-        transitionDelay: isExpanded ? "0ms" : "70ms",
+        transitionDelay: isExpanded ? "0ms" : "40ms",
       }}
       className={cn(
         "relative h-[52px] shrink-0",
-        "transition-[width] duration-[420ms]",
+        "transition-[width] duration-[380ms]",
         "[transition-timing-function:cubic-bezier(0.22,1,0.36,1)]",
         "will-change-[width]",
         "motion-reduce:transition-none",
@@ -83,12 +107,8 @@ export function ExpandingNavItem({
         aria-label={label}
         title={label}
         onClick={handleNavigate}
-        onFocus={() => {
-          setIsFocused(true);
-        }}
-        onBlur={() => {
-          setIsFocused(false);
-        }}
+        onFocus={handleFocus}
+        onBlur={handleBlur}
         className={cn(
           "group relative flex h-[52px] w-full",
           "items-center overflow-hidden rounded-full",
@@ -157,6 +177,7 @@ export function ExpandingNavItem({
             "items-center justify-center",
 
             "transition-transform duration-300 ease-out",
+
             isExpanded && "-translate-x-0.5",
 
             "motion-reduce:transform-none",
@@ -174,7 +195,7 @@ export function ExpandingNavItem({
 
         <div
           aria-hidden="true"
-          className="relative min-w-0 flex-1 overflow-hidden pr-5"
+          className="relative min-w-0 flex-1 overflow-hidden pr-3"
         >
           <AnimatePresence initial={false} mode="wait">
             {isExpanded ? (
@@ -203,7 +224,9 @@ export function ExpandingNavItem({
                       }
                 }
                 transition={{
-                  duration: prefersReducedMotion ? 0 : 0.22,
+                  duration: prefersReducedMotion
+                    ? 0
+                    : 0.2,
                   ease: "easeOut",
                 }}
                 className={cn(

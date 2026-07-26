@@ -4,7 +4,7 @@ export type QuickActionId =
   | "appearance"
   | "language"
   | "settings"
-  | "accessibility"
+  | "assistant"
   | "help"
   | "information";
 
@@ -12,13 +12,14 @@ export type QuickActionLabelKey =
   | "appearance"
   | "language"
   | "settings"
-  | "accessibility"
+  | "assistant"
   | "help"
   | "information";
 
 export type QuickActionBehavior =
   | "theme"
   | "language"
+  | "assistant"
   | "placeholder";
 
 export type QuickAction = {
@@ -53,4 +54,7 @@ export type QuickActionItemProps = {
   onSelect: (action: QuickAction) => void;
   className?: string;
 };
-export type QuickActionsDirection = "previous" | "next";
+
+export type QuickActionsDirection =
+  | "previous"
+  | "next";

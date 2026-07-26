@@ -1,5 +1,5 @@
 import {
-  Accessibility,
+  Bot,
   CircleHelp,
   Globe2,
   Info,
@@ -30,11 +30,11 @@ export const QUICK_ACTIONS = [
     isAvailable: false,
   },
   {
-    id: "accessibility",
-    labelKey: "accessibility",
-    icon: Accessibility,
-    behavior: "placeholder",
-    isAvailable: false,
+    id: "assistant",
+    labelKey: "assistant",
+    icon: Bot,
+    behavior: "assistant",
+    isAvailable: true,
   },
   {
     id: "help",
