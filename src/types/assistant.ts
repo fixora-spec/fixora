@@ -1,6 +1,8 @@
 export type AssistantLocale = "es" | "en";
 
-export type AssistantRole = "user" | "assistant";
+export type AssistantRole =
+  | "user"
+  | "assistant";
 
 export type AssistantMessageStatus =
   | "sending"
@@ -27,6 +29,11 @@ export type AssistantErrorCode =
   | "NETWORK_ERROR"
   | "INTERNAL_ERROR";
 
+export type AssistantTranslations = Record<
+  AssistantLocale,
+  string
+>;
+
 export type AssistantSource = {
   id: string;
   title: string;
@@ -37,9 +44,28 @@ export type AssistantSource = {
 export type AssistantMessage = {
   id: string;
   role: AssistantRole;
+
+  /*
+   * Contenido original del mensaje.
+   *
+   * Para el usuario se conserva exactamente
+   * como fue escrito.
+   *
+   * Para el asistente se utiliza como respaldo
+   * cuando no existan traducciones.
+   */
   content: string;
+
+  /*
+   * Solo se utiliza en mensajes del asistente.
+   * Permite cambiar las respuestas entre ES y EN
+   * sin modificar lo que escribió el usuario.
+   */
+  translations?: AssistantTranslations;
+
   createdAt: number;
   status: AssistantMessageStatus;
+
   sources?: readonly AssistantSource[];
 };
 
@@ -79,7 +105,19 @@ export type AssistantRequest = {
 };
 
 export type AssistantResponse = {
+  /*
+   * Respuesta correspondiente al idioma
+   * actualmente seleccionado en la página.
+   */
   message: string;
+
+  /*
+   * Ambas versiones de la misma respuesta.
+   * Se almacenan para permitir el cambio
+   * inmediato de idioma en el historial.
+   */
+  translations: AssistantTranslations;
+
   sources: readonly AssistantSource[];
 };
 
@@ -115,13 +153,19 @@ export type AssistantPanelCopy = {
   messageTooLong: string;
 };
 
-export type UseAssistantReturn = AssistantState & {
-  openAssistant: () => void;
-  closeAssistant: () => void;
-  toggleAssistant: () => void;
-  clearMessages: () => void;
-  clearError: () => void;
-  sendMessage: (
-    options: SendAssistantMessageOptions,
-  ) => Promise<void>;
-};
+export type UseAssistantReturn =
+  AssistantState & {
+    openAssistant: () => void;
+
+    closeAssistant: () => void;
+
+    toggleAssistant: () => void;
+
+    clearMessages: () => void;
+
+    clearError: () => void;
+
+    sendMessage: (
+      options: SendAssistantMessageOptions,
+    ) => Promise<void>;
+  };

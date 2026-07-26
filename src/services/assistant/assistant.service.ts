@@ -3,13 +3,39 @@ import { ASSISTANT_CONFIG } from "@/config/assistant.config";
 import type {
   AssistantErrorCode,
   AssistantErrorResponse,
+  AssistantKnowledgeSection,
   AssistantRequest,
   AssistantResponse,
   AssistantSource,
+  AssistantTranslations,
 } from "@/types/assistant";
 
 const DEFAULT_ERROR_MESSAGE =
   "No fue posible procesar la solicitud del asistente.";
+
+const ASSISTANT_ERROR_CODES:
+  readonly AssistantErrorCode[] = [
+    "INVALID_REQUEST",
+    "EMPTY_MESSAGE",
+    "MESSAGE_TOO_LONG",
+    "NO_INFORMATION",
+    "NETWORK_ERROR",
+    "INTERNAL_ERROR",
+  ];
+
+const ASSISTANT_KNOWLEDGE_SECTIONS:
+  readonly AssistantKnowledgeSection[] = [
+    "general",
+    "about",
+    "graphic-resources",
+    "software-licenses",
+    "hardware",
+    "technical-services",
+    "remote-support",
+    "plans-promotions",
+    "help-center",
+    "contact",
+  ];
 
 export class AssistantServiceError extends Error {
   readonly code: AssistantErrorCode;
@@ -43,6 +69,43 @@ function isRecord(
   );
 }
 
+function isAssistantErrorCode(
+  value: unknown,
+): value is AssistantErrorCode {
+  return (
+    typeof value === "string" &&
+    ASSISTANT_ERROR_CODES.includes(
+      value as AssistantErrorCode,
+    )
+  );
+}
+
+function isAssistantKnowledgeSection(
+  value: unknown,
+): value is AssistantKnowledgeSection {
+  return (
+    typeof value === "string" &&
+    ASSISTANT_KNOWLEDGE_SECTIONS.includes(
+      value as AssistantKnowledgeSection,
+    )
+  );
+}
+
+function isAssistantTranslations(
+  value: unknown,
+): value is AssistantTranslations {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  return (
+    typeof value.es === "string" &&
+    value.es.trim().length > 0 &&
+    typeof value.en === "string" &&
+    value.en.trim().length > 0
+  );
+}
+
 function isAssistantSource(
   value: unknown,
 ): value is AssistantSource {
@@ -50,14 +113,17 @@ function isAssistantSource(
     return false;
   }
 
+  const hasValidHref =
+    value.href === undefined ||
+    typeof value.href === "string";
+
   return (
     typeof value.id === "string" &&
     typeof value.title === "string" &&
-    typeof value.section === "string" &&
-    (
-      value.href === undefined ||
-      typeof value.href === "string"
-    )
+    isAssistantKnowledgeSection(
+      value.section,
+    ) &&
+    hasValidHref
   );
 }
 
@@ -70,8 +136,14 @@ function isAssistantResponse(
 
   return (
     typeof value.message === "string" &&
+    value.message.trim().length > 0 &&
+    isAssistantTranslations(
+      value.translations,
+    ) &&
     Array.isArray(value.sources) &&
-    value.sources.every(isAssistantSource)
+    value.sources.every(
+      isAssistantSource,
+    )
   );
 }
 
@@ -84,7 +156,9 @@ function isAssistantErrorResponse(
 
   return (
     typeof value.error === "string" &&
-    typeof value.code === "string"
+    isAssistantErrorCode(
+      value.code,
+    )
   );
 }
 
@@ -92,9 +166,15 @@ async function parseResponseBody(
   response: Response,
 ): Promise<unknown> {
   const contentType =
-    response.headers.get("content-type") ?? "";
+    response.headers.get(
+      "content-type",
+    ) ?? "";
 
-  if (!contentType.includes("application/json")) {
+  if (
+    !contentType.includes(
+      "application/json",
+    )
+  ) {
     return null;
   }
 
@@ -108,7 +188,8 @@ async function parseResponseBody(
 function validateAssistantRequest(
   request: AssistantRequest,
 ): AssistantRequest {
-  const message = request.message.trim();
+  const message =
+    request.message.trim();
 
   if (!message) {
     throw new AssistantServiceError(
@@ -130,9 +211,10 @@ function validateAssistantRequest(
   return {
     ...request,
     message,
-    history: request.history?.slice(
-      -ASSISTANT_CONFIG.maxHistoryMessages,
-    ),
+    history:
+      request.history?.slice(
+        -ASSISTANT_CONFIG.maxHistoryMessages,
+      ),
   };
 }
 
@@ -150,11 +232,18 @@ export async function requestAssistantResponse(
       ASSISTANT_CONFIG.apiEndpoint,
       {
         method: "POST",
+
         headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
+          "Content-Type":
+            "application/json",
+          Accept:
+            "application/json",
         },
-        body: JSON.stringify(validatedRequest),
+
+        body: JSON.stringify(
+          validatedRequest,
+        ),
+
         signal,
       },
     );
@@ -167,7 +256,9 @@ export async function requestAssistantResponse(
     }
 
     throw new AssistantServiceError(
-      "No se pudo conectar con el asistente.",
+      request.locale === "es"
+        ? "No se pudo conectar con el asistente."
+        : "Unable to connect to the assistant.",
       "NETWORK_ERROR",
     );
   }
@@ -176,7 +267,11 @@ export async function requestAssistantResponse(
     await parseResponseBody(response);
 
   if (!response.ok) {
-    if (isAssistantErrorResponse(responseBody)) {
+    if (
+      isAssistantErrorResponse(
+        responseBody,
+      )
+    ) {
       throw new AssistantServiceError(
         responseBody.error,
         responseBody.code,
@@ -191,9 +286,15 @@ export async function requestAssistantResponse(
     );
   }
 
-  if (!isAssistantResponse(responseBody)) {
+  if (
+    !isAssistantResponse(
+      responseBody,
+    )
+  ) {
     throw new AssistantServiceError(
-      "El asistente devolvió una respuesta inválida.",
+      request.locale === "es"
+        ? "El asistente devolvió una respuesta inválida."
+        : "The assistant returned an invalid response.",
       "INTERNAL_ERROR",
       response.status,
     );

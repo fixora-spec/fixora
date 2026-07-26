@@ -43,7 +43,8 @@ const MESSAGE_LABELS: Record<
     user: "Tú",
     sources: "Fuentes relacionadas",
     sending: "Enviando...",
-    error: "No se pudo completar la respuesta",
+    error:
+      "No se pudo completar la respuesta",
   },
 
   en: {
@@ -87,14 +88,13 @@ function getTypingStep(
     return 1;
   }
 
-  const maximumIterations =
-    Math.max(
-      1,
-      Math.floor(
-        MAX_TYPING_DURATION_MS /
-          TYPE_INTERVAL_MS,
-      ),
-    );
+  const maximumIterations = Math.max(
+    1,
+    Math.floor(
+      MAX_TYPING_DURATION_MS /
+        TYPE_INTERVAL_MS,
+    ),
+  );
 
   return Math.max(
     1,
@@ -132,30 +132,60 @@ export function AssistantMessage({
   const isError =
     message.status === "error";
 
+  /*
+   * Los mensajes escritos por el usuario
+   * permanecen exactamente como los escribió.
+   *
+   * Los mensajes del asistente cambian según
+   * el idioma actualmente seleccionado.
+   */
+  const displayedContent =
+    isAssistant
+      ? message.translations?.[locale] ??
+        message.content
+      : message.content;
+
+  /*
+   * Guarda mediante estado el contenido con
+   * el que se montó inicialmente el mensaje.
+   *
+   * No se utiliza useRef porque React 19 no
+   * permite leer referencias durante el render.
+   */
+  const [initialTypingContent] =
+    useState<string>(
+      () => displayedContent,
+    );
+
   const shouldAnimateText =
     isAssistant &&
     !isSending &&
     !isError &&
     !prefersReducedMotion &&
-    message.content.length > 0;
+    displayedContent.length > 0 &&
+    displayedContent ===
+      initialTypingContent;
 
   const [
     visibleCharacterCount,
     setVisibleCharacterCount,
-  ] = useState(() =>
+  ] = useState<number>(() =>
     shouldAnimateText
       ? 0
-      : message.content.length,
+      : displayedContent.length,
   );
 
   useEffect(() => {
-    if (!shouldAnimateText) {
+    if (
+      !shouldAnimateText ||
+      initialTypingContent.length === 0
+    ) {
       return;
     }
 
     const typingStep =
       getTypingStep(
-        message.content.length,
+        initialTypingContent.length,
       );
 
     const intervalId =
@@ -163,14 +193,14 @@ export function AssistantMessage({
         setVisibleCharacterCount(
           (currentCount) => {
             const nextCount = Math.min(
-              message.content.length,
+              initialTypingContent.length,
               currentCount +
                 typingStep,
             );
 
             if (
               nextCount >=
-              message.content.length
+              initialTypingContent.length
             ) {
               window.clearInterval(
                 intervalId,
@@ -188,22 +218,29 @@ export function AssistantMessage({
       );
     };
   }, [
-    message.content.length,
+    initialTypingContent,
     shouldAnimateText,
   ]);
 
+  /*
+   * Al cambiar el idioma, displayedContent ya
+   * no coincide con initialTypingContent.
+   *
+   * En ese caso la traducción se muestra completa
+   * inmediatamente, sin volver a escribirla.
+   */
   const visibleContent =
     shouldAnimateText
-      ? message.content.slice(
+      ? displayedContent.slice(
           0,
           visibleCharacterCount,
         )
-      : message.content;
+      : displayedContent;
 
   const isTyping =
     shouldAnimateText &&
     visibleCharacterCount <
-      message.content.length;
+      displayedContent.length;
 
   const resolvedAuthorLabel =
     isAssistant
@@ -235,9 +272,7 @@ export function AssistantMessage({
       {...articleProps}
       data-role={message.role}
       data-status={message.status}
-      aria-label={
-        resolvedAuthorLabel
-      }
+      aria-label={resolvedAuthorLabel}
       className={cn(
         "flex w-full gap-2.5",
 
@@ -375,7 +410,10 @@ export function AssistantMessage({
                 aria-hidden="true"
                 className={cn(
                   "ml-0.5 inline-block",
-                  "h-[1.05em] w-[2px]",
+
+                  "h-[1.05em]",
+                  "w-[2px]",
+
                   "translate-y-[2px]",
                   "rounded-full",
                   "bg-current",

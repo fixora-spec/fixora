@@ -22,6 +22,7 @@ import type {
   AssistantMessageStatus,
   AssistantRole,
   AssistantSource,
+  AssistantTranslations,
   SendAssistantMessageOptions,
   UseAssistantReturn,
 } from "@/types/assistant";
@@ -56,7 +57,10 @@ function isRecord(
 function isAssistantRole(
   value: unknown,
 ): value is AssistantRole {
-  return value === "user" || value === "assistant";
+  return (
+    value === "user" ||
+    value === "assistant"
+  );
 }
 
 function isAssistantMessageStatus(
@@ -66,6 +70,21 @@ function isAssistantMessageStatus(
     value === "sending" ||
     value === "completed" ||
     value === "error"
+  );
+}
+
+function isAssistantTranslations(
+  value: unknown,
+): value is AssistantTranslations {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  return (
+    typeof value.es === "string" &&
+    value.es.trim().length > 0 &&
+    typeof value.en === "string" &&
+    value.en.trim().length > 0
   );
 }
 
@@ -99,7 +118,15 @@ function isAssistantMessage(
     value.sources === undefined ||
     (
       Array.isArray(value.sources) &&
-      value.sources.every(isAssistantSource)
+      value.sources.every(
+        isAssistantSource,
+      )
+    );
+
+  const hasValidTranslations =
+    value.translations === undefined ||
+    isAssistantTranslations(
+      value.translations,
     );
 
   return (
@@ -108,8 +135,11 @@ function isAssistantMessage(
     typeof value.content === "string" &&
     typeof value.createdAt === "number" &&
     Number.isFinite(value.createdAt) &&
-    isAssistantMessageStatus(value.status) &&
-    hasValidSources
+    isAssistantMessageStatus(
+      value.status,
+    ) &&
+    hasValidSources &&
+    hasValidTranslations
   );
 }
 
@@ -127,9 +157,10 @@ function readStoredMessages(): AssistantMessage[] {
   }
 
   try {
-    const storedValue = window.localStorage.getItem(
-      ASSISTANT_CONFIG.storageKey,
-    );
+    const storedValue =
+      window.localStorage.getItem(
+        ASSISTANT_CONFIG.storageKey,
+      );
 
     if (!storedValue) {
       return [];
@@ -143,7 +174,9 @@ function readStoredMessages(): AssistantMessage[] {
     }
 
     return limitStoredMessages(
-      parsedValue.filter(isAssistantMessage),
+      parsedValue.filter(
+        isAssistantMessage,
+      ),
     );
   } catch {
     return [];
@@ -165,7 +198,7 @@ function writeStoredMessages(
       ),
     );
   } catch {
-    // El asistente puede seguir funcionando
+    // El asistente continúa funcionando
     // aunque localStorage no esté disponible.
   }
 }
@@ -180,23 +213,24 @@ function removeStoredMessages(): void {
       ASSISTANT_CONFIG.storageKey,
     );
   } catch {
-    // No se requiere ninguna acción adicional.
+    // No se requiere otra acción.
   }
 }
 
 export function useAssistant(): UseAssistantReturn {
-  const [isOpen, setIsOpen] = useState(false);
+  const [isOpen, setIsOpen] =
+    useState(false);
 
   const [isLoading, setIsLoading] =
     useState(false);
 
-  const [messages, setMessages] = useState<
-    AssistantMessage[]
-  >(readStoredMessages);
+  const [messages, setMessages] =
+    useState<AssistantMessage[]>(
+      readStoredMessages,
+    );
 
-  const [error, setError] = useState<
-    string | null
-  >(null);
+  const [error, setError] =
+    useState<string | null>(null);
 
   const abortControllerRef =
     useRef<AbortController | null>(null);
@@ -220,41 +254,50 @@ export function useAssistant(): UseAssistantReturn {
     writeStoredMessages(messages);
   }, [messages]);
 
-  const openAssistant = useCallback((): void => {
-    setIsOpen(true);
-  }, []);
+  const openAssistant =
+    useCallback((): void => {
+      setIsOpen(true);
+    }, []);
 
-  const closeAssistant = useCallback((): void => {
-    setIsOpen(false);
-  }, []);
+  const closeAssistant =
+    useCallback((): void => {
+      setIsOpen(false);
+    }, []);
 
-  const toggleAssistant = useCallback((): void => {
-    setIsOpen((currentValue) => !currentValue);
-  }, []);
+  const toggleAssistant =
+    useCallback((): void => {
+      setIsOpen(
+        (currentValue) =>
+          !currentValue,
+      );
+    }, []);
 
-  const clearError = useCallback((): void => {
-    setError(null);
-  }, []);
+  const clearError =
+    useCallback((): void => {
+      setError(null);
+    }, []);
 
-  const clearMessages = useCallback((): void => {
-    abortControllerRef.current?.abort();
-    abortControllerRef.current = null;
+  const clearMessages =
+    useCallback((): void => {
+      abortControllerRef.current?.abort();
+      abortControllerRef.current = null;
 
-    isSendingRef.current = false;
+      isSendingRef.current = false;
 
-    setMessages([]);
-    setError(null);
-    setIsLoading(false);
+      setMessages([]);
+      setError(null);
+      setIsLoading(false);
 
-    removeStoredMessages();
-  }, []);
+      removeStoredMessages();
+    }, []);
 
   const sendMessage = useCallback(
     async ({
       message,
       locale,
     }: SendAssistantMessageOptions): Promise<void> => {
-      const normalizedMessage = message.trim();
+      const normalizedMessage =
+        message.trim();
 
       if (
         !normalizedMessage ||
@@ -263,42 +306,60 @@ export function useAssistant(): UseAssistantReturn {
         return;
       }
 
-      const copy = getAssistantCopy(locale);
+      const currentCopy =
+        getAssistantCopy(locale);
 
       if (
         normalizedMessage.length >
         ASSISTANT_CONFIG.maxMessageLength
       ) {
-        setError(copy.messageTooLong);
+        setError(
+          currentCopy.messageTooLong,
+        );
+
         return;
       }
 
       const history = messages
         .filter(
           (storedMessage) =>
-            storedMessage.status === "completed",
+            storedMessage.status ===
+            "completed",
         )
         .slice(
           -ASSISTANT_CONFIG.maxHistoryMessages,
         )
         .map((storedMessage) => ({
           role: storedMessage.role,
-          content: storedMessage.content,
+
+          content:
+            storedMessage.role ===
+            "assistant"
+              ? storedMessage
+                  .translations?.[
+                  locale
+                ] ??
+                storedMessage.content
+              : storedMessage.content,
         }));
 
       const userMessage: AssistantMessage = {
-        id: createAssistantMessageId("user"),
+        id:
+          createAssistantMessageId(
+            "user",
+          ),
         role: "user",
         content: normalizedMessage,
         createdAt: Date.now(),
         status: "completed",
       };
 
-      setMessages((currentMessages) =>
-        limitStoredMessages([
-          ...currentMessages,
-          userMessage,
-        ]),
+      setMessages(
+        (currentMessages) =>
+          limitStoredMessages([
+            ...currentMessages,
+            userMessage,
+          ]),
       );
 
       setError(null);
@@ -308,15 +369,18 @@ export function useAssistant(): UseAssistantReturn {
 
       abortControllerRef.current?.abort();
 
-      const controller = new AbortController();
+      const controller =
+        new AbortController();
 
-      abortControllerRef.current = controller;
+      abortControllerRef.current =
+        controller;
 
       try {
         const response =
           await requestAssistantResponse(
             {
-              message: normalizedMessage,
+              message:
+                normalizedMessage,
               locale,
               history,
             },
@@ -330,22 +394,35 @@ export function useAssistant(): UseAssistantReturn {
           return;
         }
 
-        const assistantMessage: AssistantMessage = {
-          id: createAssistantMessageId(
-            "assistant",
-          ),
+        const assistantMessage:
+          AssistantMessage = {
+          id:
+            createAssistantMessageId(
+              "assistant",
+            ),
+
           role: "assistant",
-          content: response.message,
+
+          content:
+            response.message,
+
+          translations:
+            response.translations,
+
           createdAt: Date.now(),
+
           status: "completed",
-          sources: response.sources,
+
+          sources:
+            response.sources,
         };
 
-        setMessages((currentMessages) =>
-          limitStoredMessages([
-            ...currentMessages,
-            assistantMessage,
-          ]),
+        setMessages(
+          (currentMessages) =>
+            limitStoredMessages([
+              ...currentMessages,
+              assistantMessage,
+            ]),
         );
       } catch (caughtError) {
         if (
@@ -356,34 +433,66 @@ export function useAssistant(): UseAssistantReturn {
         }
 
         const errorMessage =
-          caughtError instanceof AssistantServiceError
+          caughtError instanceof
+          AssistantServiceError
             ? caughtError.message
-            : copy.errorMessage;
+            : currentCopy.errorMessage;
+
+        const spanishCopy =
+          getAssistantCopy("es");
+
+        const englishCopy =
+          getAssistantCopy("en");
+
+        const errorTranslations:
+          AssistantTranslations = {
+          es:
+            locale === "es"
+              ? errorMessage
+              : spanishCopy.errorMessage,
+
+          en:
+            locale === "en"
+              ? errorMessage
+              : englishCopy.errorMessage,
+        };
 
         setError(errorMessage);
 
-        const assistantErrorMessage: AssistantMessage =
-          {
-            id: createAssistantMessageId(
+        const assistantErrorMessage:
+          AssistantMessage = {
+          id:
+            createAssistantMessageId(
               "assistant",
             ),
-            role: "assistant",
-            content: errorMessage,
-            createdAt: Date.now(),
-            status: "error",
-          };
 
-        setMessages((currentMessages) =>
-          limitStoredMessages([
-            ...currentMessages,
-            assistantErrorMessage,
-          ]),
+          role: "assistant",
+
+          content:
+            errorTranslations[locale],
+
+          translations:
+            errorTranslations,
+
+          createdAt: Date.now(),
+
+          status: "error",
+        };
+
+        setMessages(
+          (currentMessages) =>
+            limitStoredMessages([
+              ...currentMessages,
+              assistantErrorMessage,
+            ]),
         );
       } finally {
         if (
-          abortControllerRef.current === controller
+          abortControllerRef.current ===
+          controller
         ) {
-          abortControllerRef.current = null;
+          abortControllerRef.current =
+            null;
         }
 
         isSendingRef.current = false;

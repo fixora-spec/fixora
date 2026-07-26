@@ -1,22 +1,41 @@
 import { NextResponse } from "next/server";
 
-import {
-  ASSISTANT_CONFIG,
-  getAssistantCopy,
-} from "@/config/assistant.config";
+import { ASSISTANT_CONFIG } from "@/config/assistant.config";
 
-import { buildAssistantContext } from "@/lib/assistant/build-assistant-context";
-import { normalizeAssistantText } from "@/lib/assistant/search-assistant-knowledge";
+import { ASSISTANT_KNOWLEDGE_EN } from "@/content/assistant/knowledge.en";
+import { ASSISTANT_KNOWLEDGE_ES } from "@/content/assistant/knowledge.es";
+
+import {
+  getConversationalResponse,
+} from "@/lib/assistant/get-conversational-response";
+
+import {
+  searchAssistantKnowledge,
+} from "@/lib/assistant/search-assistant-knowledge";
 
 import type {
   AssistantErrorCode,
   AssistantErrorResponse,
   AssistantHistoryMessage,
+  AssistantKnowledgeItem,
   AssistantLocale,
   AssistantRequest,
   AssistantResponse,
   AssistantSearchResult,
+  AssistantSource,
+  AssistantTranslations,
 } from "@/types/assistant";
+
+const ALL_ASSISTANT_KNOWLEDGE:
+  readonly AssistantKnowledgeItem[] = [
+    ...ASSISTANT_KNOWLEDGE_ES,
+    ...ASSISTANT_KNOWLEDGE_EN,
+  ];
+
+type LocalizedKnowledgeResult = {
+  message: string;
+  results: readonly AssistantSearchResult[];
+};
 
 function isRecord(
   value: unknown,
@@ -93,34 +112,93 @@ function createErrorResponse(
   );
 }
 
-function isGreeting(
-  message: string,
+function getLocalizedKnowledge(
   locale: AssistantLocale,
-): boolean {
-  const normalizedMessage =
-    normalizeAssistantText(message);
+): readonly AssistantKnowledgeItem[] {
+  return locale === "es"
+    ? ASSISTANT_KNOWLEDGE_ES
+    : ASSISTANT_KNOWLEDGE_EN;
+}
 
-  const greetings =
-    locale === "es"
-      ? [
-          "hola",
-          "buenos dias",
-          "buenas tardes",
-          "buenas noches",
-          "hola asistente",
-          "hola fixora",
-        ]
-      : [
-          "hello",
-          "hi",
-          "good morning",
-          "good afternoon",
-          "good evening",
-          "hello assistant",
-          "hello fixora",
-        ];
+function localizeSearchResults(
+  results: readonly AssistantSearchResult[],
+  locale: AssistantLocale,
+): readonly AssistantSearchResult[] {
+  const localizedKnowledge =
+    getLocalizedKnowledge(locale);
 
-  return greetings.includes(normalizedMessage);
+  const localizedResults:
+    AssistantSearchResult[] = [];
+
+  const addedSections = new Set<string>();
+
+  for (const result of results) {
+    const section = result.item.section;
+
+    if (addedSections.has(section)) {
+      continue;
+    }
+
+    const localizedItem =
+      localizedKnowledge.find(
+        (item) =>
+          item.section === section,
+      );
+
+    if (!localizedItem) {
+      continue;
+    }
+
+    localizedResults.push({
+      item: localizedItem,
+      score: result.score,
+      matchedKeywords:
+        result.matchedKeywords,
+    });
+
+    addedSections.add(section);
+
+    if (
+      localizedResults.length >=
+      ASSISTANT_CONFIG.maxKnowledgeResults
+    ) {
+      break;
+    }
+  }
+
+  return localizedResults;
+}
+
+function searchBilingualKnowledge(
+  message: string,
+): readonly AssistantSearchResult[] {
+  return searchAssistantKnowledge({
+    query: message,
+    knowledge:
+      ALL_ASSISTANT_KNOWLEDGE,
+    limit:
+      ASSISTANT_CONFIG.maxKnowledgeResults *
+      2,
+    minimumScore:
+      ASSISTANT_CONFIG.minimumSearchScore,
+  });
+}
+
+function buildSource(
+  result: AssistantSearchResult,
+): AssistantSource {
+  return {
+    id: result.item.id,
+    title: result.item.title,
+    section: result.item.section,
+    href: result.item.href,
+  };
+}
+
+function buildSources(
+  results: readonly AssistantSearchResult[],
+): readonly AssistantSource[] {
+  return results.map(buildSource);
 }
 
 function buildNoInformationMessage(
@@ -143,7 +221,10 @@ function buildRelatedText(
 ): string {
   const relatedTitles = results
     .slice(1, 3)
-    .map((result) => result.item.title);
+    .map(
+      (result) =>
+        result.item.title,
+    );
 
   if (relatedTitles.length === 0) {
     return "";
@@ -157,33 +238,155 @@ function buildRelatedText(
   return `\n\n${prefix} ${relatedTitles.join(", ")}.`;
 }
 
-function buildKnowledgeResponse(
+function buildKnowledgeMessage(
   results: readonly AssistantSearchResult[],
   locale: AssistantLocale,
 ): string {
   const primaryResult = results[0];
 
   if (!primaryResult) {
-    return buildNoInformationMessage(locale);
+    return "";
   }
 
   return [
     primaryResult.item.content,
-    buildRelatedText(results, locale),
+    buildRelatedText(
+      results,
+      locale,
+    ),
   ].join("");
+}
+
+function combineMessages(
+  firstMessage: string,
+  secondMessage: string,
+): string {
+  return [
+    firstMessage,
+    secondMessage,
+  ]
+    .filter(
+      (message) =>
+        message.trim().length > 0,
+    )
+    .join("\n\n");
+}
+
+function buildLocalizedKnowledgeResult(
+  searchResults: readonly AssistantSearchResult[],
+  locale: AssistantLocale,
+): LocalizedKnowledgeResult {
+  const localizedResults =
+    localizeSearchResults(
+      searchResults,
+      locale,
+    );
+
+  return {
+    message: buildKnowledgeMessage(
+      localizedResults,
+      locale,
+    ),
+    results: localizedResults,
+  };
+}
+
+function buildTranslations(
+  message: string,
+): {
+  translations: AssistantTranslations;
+  spanishResults:
+    readonly AssistantSearchResult[];
+  englishResults:
+    readonly AssistantSearchResult[];
+} {
+  const spanishConversation =
+    getConversationalResponse(
+      message,
+      "es",
+    );
+
+  const englishConversation =
+    getConversationalResponse(
+      message,
+      "en",
+    );
+
+  const shouldSearchKnowledge =
+    !spanishConversation ||
+    spanishConversation.continueToKnowledge ||
+    !englishConversation ||
+    englishConversation.continueToKnowledge;
+
+  const bilingualResults =
+    shouldSearchKnowledge
+      ? searchBilingualKnowledge(message)
+      : [];
+
+  const spanishKnowledge =
+    buildLocalizedKnowledgeResult(
+      bilingualResults,
+      "es",
+    );
+
+  const englishKnowledge =
+    buildLocalizedKnowledgeResult(
+      bilingualResults,
+      "en",
+    );
+
+  const spanishMessage =
+    spanishConversation
+      ? spanishConversation.continueToKnowledge
+        ? combineMessages(
+            spanishConversation.message,
+            spanishKnowledge.message,
+          )
+        : spanishConversation.message
+      : spanishKnowledge.message;
+
+  const englishMessage =
+    englishConversation
+      ? englishConversation.continueToKnowledge
+        ? combineMessages(
+            englishConversation.message,
+            englishKnowledge.message,
+          )
+        : englishConversation.message
+      : englishKnowledge.message;
+
+  return {
+    translations: {
+      es:
+        spanishMessage ||
+        buildNoInformationMessage("es"),
+
+      en:
+        englishMessage ||
+        buildNoInformationMessage("en"),
+    },
+
+    spanishResults:
+      spanishKnowledge.results,
+
+    englishResults:
+      englishKnowledge.results,
+  };
 }
 
 export async function POST(
   request: Request,
 ): Promise<
   NextResponse<
-    AssistantResponse | AssistantErrorResponse
+    AssistantResponse |
+    AssistantErrorResponse
   >
 > {
   let requestBody: unknown;
 
   try {
-    requestBody = await request.json();
+    requestBody =
+      await request.json();
   } catch {
     return createErrorResponse(
       "La solicitud contiene datos inválidos.",
@@ -193,7 +396,9 @@ export async function POST(
   }
 
   const assistantRequest =
-    parseAssistantRequest(requestBody);
+    parseAssistantRequest(
+      requestBody,
+    );
 
   if (!assistantRequest) {
     return createErrorResponse(
@@ -203,8 +408,11 @@ export async function POST(
     );
   }
 
-  const message = assistantRequest.message.trim();
-  const { locale } = assistantRequest;
+  const message =
+    assistantRequest.message.trim();
+
+  const { locale } =
+    assistantRequest;
 
   if (!message) {
     return createErrorResponse(
@@ -229,42 +437,32 @@ export async function POST(
     );
   }
 
-  if (isGreeting(message, locale)) {
-    const copy = getAssistantCopy(locale);
-
-    return NextResponse.json({
-      message: copy.greeting,
-      sources: [],
-    } satisfies AssistantResponse);
-  }
-
   try {
-    const assistantContext =
-      buildAssistantContext({
-        message,
-        locale,
-      });
+    const {
+      translations,
+      spanishResults,
+      englishResults,
+    } = buildTranslations(message);
 
-    if (!assistantContext.hasResults) {
-      return NextResponse.json({
-        message:
-          buildNoInformationMessage(locale),
-        sources: [],
-      } satisfies AssistantResponse);
-    }
+    const localizedResults =
+      locale === "es"
+        ? spanishResults
+        : englishResults;
 
     return NextResponse.json({
-      message: buildKnowledgeResponse(
-        assistantContext.results,
-        locale,
-      ),
-      sources: assistantContext.sources,
+      message:
+        translations[locale],
+      translations,
+      sources:
+        buildSources(
+          localizedResults,
+        ),
     } satisfies AssistantResponse);
   } catch {
     return createErrorResponse(
       locale === "es"
-        ? "Ocurrió un error al procesar la consulta."
-        : "An error occurred while processing the request.",
+        ? "No pude procesar tu consulta. Inténtalo nuevamente."
+        : "I could not process your question. Please try again.",
       "INTERNAL_ERROR",
       500,
     );
