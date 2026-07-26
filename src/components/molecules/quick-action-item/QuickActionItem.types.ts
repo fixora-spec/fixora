@@ -1,0 +1,1 @@
+export type { QuickActionItemProps } from "@/types/quick-action";

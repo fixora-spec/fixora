@@ -1,0 +1,57 @@
+{
+  "metadata": {
+    "title": "Fixora",
+    "description": "Technology solutions, digital resources and technical services."
+  },
+  "navigation": {
+    "mainLabel": "Main navigation",
+    "home": "Home",
+    "about": "About Fixora",
+    "graphicResources": "Graphic Resources",
+    "softwareLicenses": "Software and Licenses",
+    "hardware": "Hardware",
+    "technicalServices": "Technical Services",
+    "remoteSupport": "Remote Support",
+    "plansPromotions": "Plans and Promotions",
+    "helpCenter": "Help Center",
+    "contact": "Contact",
+    "signIn": "Sign in",
+    "openMenu": "Open navigation menu",
+    "closeMenu": "Close navigation menu"
+  },
+  "quickActions": {
+    "label": "Quick actions",
+    "open": "Open quick actions",
+    "close": "Close quick actions",
+    "appearance": "Appearance",
+    "settings": "Settings",
+    "language": "Language",
+    "accessibility": "Accessibility",
+    "help": "Help",
+    "information": "Information",
+    "previous": "Show previous actions",
+    "next": "Show next actions",
+    "comingSoon": "Coming soon"
+  },
+  "theme": {
+    "light": "Light mode",
+    "dark": "Dark mode",
+    "system": "Use system theme",
+    "switchToLight": "Switch to light mode",
+    "switchToDark": "Switch to dark mode"
+  },
+  "language": {
+    "spanish": "Spanish",
+    "english": "English",
+    "spanishShort": "ES",
+    "englishShort": "EN",
+    "switchToSpanish": "Switch to Spanish",
+    "switchToEnglish": "Switch to English"
+  },
+  "common": {
+    "close": "Close",
+    "back": "Back",
+    "previous": "Previous",
+    "next": "Next"
+  }
+}
