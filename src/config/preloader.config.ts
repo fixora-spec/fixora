@@ -248,14 +248,14 @@ export const PRELOADER_CONFIG = {
 
   storage: {
     /*
-     * El preloader se mostrará una sola vez
-     * por pestaña o sesión del navegador.
+     * El preloader se habilita en cada
+     * carga completa del navegador.
      *
-     * No volverá a aparecer cuando el usuario
-     * cambie de español a inglés, de inglés a
-     * español o navegue por las páginas internas.
+     * El hook evitará que vuelva a mostrarse
+     * durante cambios de idioma o navegación
+     * interna dentro del mismo documento.
      */
-    strategy: "session",
+    strategy: "always",
 
     storageKey:
       "fixora-app-preloader",

@@ -35,6 +35,18 @@ type PreloaderRuntimeState = {
 
 const MINIMUM_DURATION_MS = 1;
 
+/*
+ * Esta variable vive únicamente durante la carga
+ * actual del documento en el navegador.
+ *
+ * - Se reinicia automáticamente con F5 o al pulsar
+ *   el botón Recargar del navegador.
+ * - Se conserva durante la navegación interna de
+ *   Next.js, incluido el cambio de idioma.
+ */
+let hasStartedPreloaderInCurrentDocument =
+  false;
+
 function normalizeDuration(
   durationMs?: number,
 ): number {
@@ -112,8 +124,13 @@ function createInitialState(
   const maximum =
     PRELOADER_CONFIG.progress.maximum;
 
+  const hasAlreadyStartedInBrowser =
+    typeof window !== "undefined" &&
+    hasStartedPreloaderInCurrentDocument;
+
   if (
     !enabled ||
+    hasAlreadyStartedInBrowser ||
     normalizedProgress >= maximum ||
     !shouldShowPreloader(
       PRELOADER_CONFIG.storage
@@ -202,6 +219,13 @@ export function useAppPreloader({
   const mountedRef =
     useRef(true);
 
+  const shouldMarkDocumentRef =
+    useRef(
+      enabled &&
+        runtimeState.status !==
+          "completed",
+    );
+
   const clearAnimationFrame =
     useCallback((): void => {
       cancelFrame(
@@ -233,6 +257,17 @@ export function useAppPreloader({
 
   useEffect(() => {
     mountedRef.current = true;
+
+    /*
+     * Se marca después del primer montaje real.
+     * De este modo, React Strict Mode puede ejecutar
+     * sus comprobaciones de desarrollo sin impedir
+     * que el preloader aparezca al cargar la página.
+     */
+    if (shouldMarkDocumentRef.current) {
+      hasStartedPreloaderInCurrentDocument =
+        true;
+    }
 
     return () => {
       mountedRef.current = false;
