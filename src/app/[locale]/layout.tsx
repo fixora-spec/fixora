@@ -93,7 +93,6 @@ export default async function LocaleLayout({
                 preloaderLocale
               }
               enabled
-              durationMs={6000}
               initialProgress={0}
               lockDocumentScroll
               zIndex={9999}
