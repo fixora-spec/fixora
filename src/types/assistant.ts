@@ -1,4 +1,9 @@
-export type AssistantLocale = "es" | "en";
+import type {
+  Locale,
+} from "@/types/locale";
+
+export type AssistantLocale =
+  Locale;
 
 export type AssistantRole =
   | "user"
@@ -29,143 +34,274 @@ export type AssistantErrorCode =
   | "NETWORK_ERROR"
   | "INTERNAL_ERROR";
 
-export type AssistantTranslations = Record<
-  AssistantLocale,
-  string
->;
+export type AssistantTranslations =
+  Record<
+    AssistantLocale,
+    string
+  >;
 
 export type AssistantSource = {
-  id: string;
-  title: string;
-  section: AssistantKnowledgeSection;
-  href?: string;
+  id:
+    string;
+
+  title:
+    string;
+
+  section:
+    AssistantKnowledgeSection;
+
+  href?:
+    string;
+};
+
+export type AssistantAuthAction =
+  | "NONE"
+  | "ASK_PASSWORD_LENGTH"
+  | "SHOW_GENERATED_PASSWORDS"
+  | "OPEN_USER_SIGN_IN"
+  | "OPEN_USER_REGISTRATION"
+  | "OPEN_EMAIL_VERIFICATION"
+  | "OPEN_PASSWORD_RECOVERY"
+  | "OPEN_PASSWORD_RESET"
+  | "OPEN_ADMIN_SIGN_IN"
+  | "CHECK_USERNAME_AVAILABILITY"
+  | "REQUEST_USERNAME_FOR_SUGGESTIONS";
+
+export type AssistantToolPayload = {
+  passwordSuggestions?:
+    readonly string[];
+
+  aliasSuggestions?:
+    readonly string[];
+
+  authAction?:
+    AssistantAuthAction;
+
+  requiresUserInput?:
+    boolean;
+
+  passwordLength?:
+    number;
 };
 
 export type AssistantMessage = {
-  id: string;
-  role: AssistantRole;
+  id:
+    string;
+
+  role:
+    AssistantRole;
 
   /*
-   * Contenido original del mensaje.
+   * Para los mensajes del usuario se conserva
+   * exactamente el contenido escrito.
    *
-   * Para el usuario se conserva exactamente
-   * como fue escrito.
-   *
-   * Para el asistente se utiliza como respaldo
-   * cuando no existan traducciones.
+   * Para los mensajes del asistente se utiliza
+   * como respaldo cuando no existan traducciones.
    */
-  content: string;
+  content:
+    string;
 
   /*
    * Solo se utiliza en mensajes del asistente.
-   * Permite cambiar las respuestas entre ES y EN
-   * sin modificar lo que escribió el usuario.
+   * Permite cambiar entre español e inglés
+   * sin modificar los mensajes del usuario.
    */
-  translations?: AssistantTranslations;
+  translations?:
+    AssistantTranslations;
 
-  createdAt: number;
-  status: AssistantMessageStatus;
+  createdAt:
+    number;
 
-  sources?: readonly AssistantSource[];
+  status:
+    AssistantMessageStatus;
+
+  sources?:
+    readonly AssistantSource[];
+
+  tools?:
+    AssistantToolPayload;
 };
 
 export type AssistantSuggestion = {
-  id: string;
-  label: string;
-  prompt: string;
+  id:
+    string;
+
+  label:
+    string;
+
+  prompt:
+    string;
 };
 
 export type AssistantKnowledgeItem = {
-  id: string;
-  locale: AssistantLocale;
-  section: AssistantKnowledgeSection;
-  title: string;
-  summary: string;
-  content: string;
-  keywords: readonly string[];
-  href?: string;
-  priority: number;
+  id:
+    string;
+
+  locale:
+    AssistantLocale;
+
+  section:
+    AssistantKnowledgeSection;
+
+  title:
+    string;
+
+  summary:
+    string;
+
+  content:
+    string;
+
+  keywords:
+    readonly string[];
+
+  href?:
+    string;
+
+  priority:
+    number;
 };
 
 export type AssistantSearchResult = {
-  item: AssistantKnowledgeItem;
-  score: number;
-  matchedKeywords: readonly string[];
+  item:
+    AssistantKnowledgeItem;
+
+  score:
+    number;
+
+  matchedKeywords:
+    readonly string[];
 };
 
 export type AssistantHistoryMessage = {
-  role: AssistantRole;
-  content: string;
+  role:
+    AssistantRole;
+
+  content:
+    string;
 };
 
 export type AssistantRequest = {
-  message: string;
-  locale: AssistantLocale;
-  history?: readonly AssistantHistoryMessage[];
+  message:
+    string;
+
+  locale:
+    AssistantLocale;
+
+  history?:
+    readonly AssistantHistoryMessage[];
 };
 
 export type AssistantResponse = {
   /*
    * Respuesta correspondiente al idioma
-   * actualmente seleccionado en la página.
+   * seleccionado actualmente.
    */
-  message: string;
+  message:
+    string;
 
   /*
-   * Ambas versiones de la misma respuesta.
-   * Se almacenan para permitir el cambio
-   * inmediato de idioma en el historial.
+   * Ambas versiones del mismo mensaje.
+   * Se almacenan para actualizar el idioma
+   * inmediatamente dentro del historial.
    */
-  translations: AssistantTranslations;
+  translations:
+    AssistantTranslations;
 
-  sources: readonly AssistantSource[];
+  sources:
+    readonly AssistantSource[];
+
+  tools?:
+    AssistantToolPayload;
 };
 
 export type AssistantErrorResponse = {
-  error: string;
-  code: AssistantErrorCode;
+  error:
+    string;
+
+  code:
+    AssistantErrorCode;
 };
 
 export type AssistantState = {
-  isOpen: boolean;
-  isLoading: boolean;
-  messages: AssistantMessage[];
-  error: string | null;
+  isOpen:
+    boolean;
+
+  isLoading:
+    boolean;
+
+  messages:
+    AssistantMessage[];
+
+  error:
+    string | null;
 };
 
 export type SendAssistantMessageOptions = {
-  message: string;
-  locale: AssistantLocale;
+  message:
+    string;
+
+  locale:
+    AssistantLocale;
 };
 
 export type AssistantPanelCopy = {
-  title: string;
-  subtitle: string;
-  greeting: string;
-  emptyTitle: string;
-  emptyDescription: string;
-  inputPlaceholder: string;
-  sendLabel: string;
-  closeLabel: string;
-  clearLabel: string;
-  loadingLabel: string;
-  errorMessage: string;
-  messageTooLong: string;
+  title:
+    string;
+
+  subtitle:
+    string;
+
+  greeting:
+    string;
+
+  emptyTitle:
+    string;
+
+  emptyDescription:
+    string;
+
+  inputPlaceholder:
+    string;
+
+  sendLabel:
+    string;
+
+  closeLabel:
+    string;
+
+  clearLabel:
+    string;
+
+  loadingLabel:
+    string;
+
+  errorMessage:
+    string;
+
+  messageTooLong:
+    string;
 };
 
 export type UseAssistantReturn =
   AssistantState & {
-    openAssistant: () => void;
+    openAssistant:
+      () => void;
 
-    closeAssistant: () => void;
+    closeAssistant:
+      () => void;
 
-    toggleAssistant: () => void;
+    toggleAssistant:
+      () => void;
 
-    clearMessages: () => void;
+    clearMessages:
+      () => void;
 
-    clearError: () => void;
+    clearError:
+      () => void;
 
     sendMessage: (
-      options: SendAssistantMessageOptions,
+      options:
+        SendAssistantMessageOptions,
     ) => Promise<void>;
   };

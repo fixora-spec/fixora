@@ -1,3 +1,12 @@
+import {
+  ApplicationBootstrap,
+} from "@/components/organisms/application-bootstrap";
+
 export default function SignInPage() {
-  return null;
+  return (
+    <ApplicationBootstrap
+      preloaderCompleted
+      automaticAuthenticationEnabled
+    />
+  );
 }

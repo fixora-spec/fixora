@@ -21,33 +21,78 @@ import {
   useTranslations,
 } from "next-intl";
 
-import { MenuTrigger } from "@/components/atoms/menu-trigger";
-import { QuickActionItem } from "@/components/molecules/quick-action-item";
-import { AssistantPanel } from "@/components/organisms/assistant-panel";
+import {
+  MenuTrigger,
+} from "@/components/atoms/menu-trigger";
 
-import { QUICK_ACTIONS_LAYOUT } from "@/config/quick-actions.config";
+import {
+  QuickActionItem,
+} from "@/components/molecules/quick-action-item";
 
-import { useClickOutside } from "@/hooks/use-click-outside";
-import { useEscapeKey } from "@/hooks/use-escape-key";
-import { useMediaQuery } from "@/hooks/use-media-query";
-import { useQuickActionsCarousel } from "@/hooks/use-quick-actions-carousel";
+import {
+  AssistantPanel,
+} from "@/components/organisms/assistant-panel";
+
+import {
+  NotificationsPanel,
+} from "@/components/organisms/notifications-panel/NotificationsPanel";
+
+import {
+  ACCOUNT_QUICK_ACTIONS,
+  PUBLIC_QUICK_ACTIONS,
+  QUICK_ACTIONS_LAYOUT,
+} from "@/config/quick-actions.config";
+
+import {
+  useClickOutside,
+} from "@/hooks/use-click-outside";
+
+import {
+  useEscapeKey,
+} from "@/hooks/use-escape-key";
+
+import {
+  useMediaQuery,
+} from "@/hooks/use-media-query";
+
+import {
+  useNotifications,
+} from "@/hooks/use-notifications";
+
+import {
+  useQuickActionsCarousel,
+} from "@/hooks/use-quick-actions-carousel";
 
 import {
   usePathname,
   useRouter,
 } from "@/i18n/navigation";
 
-import { useTheme } from "@/providers/theme-provider";
-import { cn } from "@/utils/cn";
+import {
+  useAuth,
+} from "@/providers/auth-provider";
 
-import type { Locale } from "@/types/locale";
+import {
+  useTheme,
+} from "@/providers/theme-provider";
+
+import type {
+  Locale,
+} from "@/types/locale";
 
 import type {
   QuickAction,
+  QuickActionId,
   QuickActionPosition,
 } from "@/types/quick-action";
 
-import type { QuickActionsMenuProps } from "./QuickActionsMenu.types";
+import {
+  cn,
+} from "@/utils/cn";
+
+import type {
+  QuickActionsMenuProps,
+} from "./QuickActionsMenu.types";
 
 const ACTIONS_CONTAINER_ID =
   "fixora-quick-actions";
@@ -90,94 +135,263 @@ const DESKTOP_POSITIONS = [
   },
 ] as const;
 
+function getAccountActionLabel(
+  actionId: QuickActionId,
+  locale: Locale,
+): string | undefined {
+  const english =
+    locale === "en";
+
+  switch (
+    actionId
+  ) {
+    case "profile":
+      return english
+        ? "Profile"
+        : "Perfil";
+
+    case "notifications":
+      return english
+        ? "Notifications"
+        : "Notificaciones";
+
+    case "cart":
+      return english
+        ? "Cart"
+        : "Carrito";
+
+    case "logout":
+      return english
+        ? "Sign out"
+        : "Cerrar sesión";
+
+    default:
+      return undefined;
+  }
+}
+
+function formatNotificationBadge(
+  unreadCount: number,
+): string | undefined {
+  if (
+    unreadCount <= 0
+  ) {
+    return undefined;
+  }
+
+  return unreadCount > 99
+    ? "99+"
+    : String(
+        unreadCount,
+      );
+}
+
 export function QuickActionsMenu({
   className,
   ...containerProps
 }: QuickActionsMenuProps) {
   const containerRef =
-    useRef<HTMLDivElement>(null);
+    useRef<HTMLDivElement>(
+      null,
+    );
 
-  const wheelDeltaRef = useRef(0);
+  const wheelDeltaRef =
+    useRef(
+      0,
+    );
 
-  const [isOpen, setIsOpen] =
-    useState(false);
+  const [
+    isOpen,
+    setIsOpen,
+  ] = useState(
+    false,
+  );
 
   const [
     isAssistantOpen,
     setIsAssistantOpen,
-  ] = useState(false);
-
-  const [, startLocaleTransition] =
-    useTransition();
-
-  const isDesktop = useMediaQuery(
-    "(min-width: 768px)",
+  ] = useState(
+    false,
   );
 
-  const locale = useLocale() as Locale;
+  const [
+    isNotificationsOpen,
+    setIsNotificationsOpen,
+  ] = useState(
+    false,
+  );
 
-  const pathname = usePathname();
-  const router = useRouter();
+  const [
+    ,
+    startLocaleTransition,
+  ] = useTransition();
+
+  const isDesktop =
+    useMediaQuery(
+      "(min-width: 768px)",
+    );
+
+  const locale =
+    useLocale() as Locale;
+
+  const pathname =
+    usePathname();
+
+  const router =
+    useRouter();
 
   const {
     resolvedTheme,
     toggleTheme,
   } = useTheme();
 
-  const t = useTranslations(
-    "quickActions",
-  );
+  const {
+    authenticated:
+      isAuthenticated,
 
-  const tTheme = useTranslations(
-    "theme",
-  );
+    signOut,
+  } = useAuth();
 
-  const tLanguage = useTranslations(
-    "language",
-  );
+  const {
+    unreadCount:
+      unreadNotificationsCount,
+
+    refresh:
+      refreshNotifications,
+  } = useNotifications({
+    enabled:
+      isAuthenticated,
+
+    automaticLoad:
+      true,
+  });
+
+  const availableActions =
+    useMemo<readonly QuickAction[]>(
+      () =>
+        isAuthenticated
+          ? [
+              ...PUBLIC_QUICK_ACTIONS,
+              ...ACCOUNT_QUICK_ACTIONS,
+            ]
+          : [
+              ...PUBLIC_QUICK_ACTIONS,
+            ],
+      [
+        isAuthenticated,
+      ],
+    );
+
+  const translations =
+    useTranslations(
+      "quickActions",
+    );
+
+  const themeTranslations =
+    useTranslations(
+      "theme",
+    );
+
+  const languageTranslations =
+    useTranslations(
+      "language",
+    );
 
   const {
     visibleActions,
     showPrevious,
     showNext,
-  } = useQuickActionsCarousel();
+  } = useQuickActionsCarousel({
+    actions:
+      availableActions,
+  });
 
   const positions =
-    useMemo<QuickActionPosition[]>(() => {
-      const source = isDesktop
-        ? DESKTOP_POSITIONS
-        : MOBILE_POSITIONS;
+    useMemo<QuickActionPosition[]>(
+      () => {
+        const source =
+          isDesktop
+            ? DESKTOP_POSITIONS
+            : MOBILE_POSITIONS;
 
-      return source.map(
-        (position, index) => ({
-          index,
-          angle: 0,
-          x: position.x,
-          y: position.y,
-        }),
-      );
-    }, [isDesktop]);
+        return source.map(
+          (
+            position,
+            index,
+          ) => ({
+            index,
+            angle:
+              0,
+            x:
+              position.x,
+            y:
+              position.y,
+          }),
+        );
+      },
+      [
+        isDesktop,
+      ],
+    );
 
   const closeMenu =
-    useCallback((): void => {
-      setIsOpen(false);
-      wheelDeltaRef.current = 0;
-    }, []);
+    useCallback(
+      (): void => {
+        setIsOpen(
+          false,
+        );
+
+        wheelDeltaRef.current =
+          0;
+      },
+      [],
+    );
 
   const toggleMenu =
-    useCallback((): void => {
-      setIsOpen(
-        (currentState) =>
-          !currentState,
-      );
+    useCallback(
+      (): void => {
+        setIsOpen(
+          (
+            currentState,
+          ) =>
+            !currentState,
+        );
 
-      wheelDeltaRef.current = 0;
-    }, []);
+        wheelDeltaRef.current =
+          0;
+      },
+      [],
+    );
 
   const closeAssistant =
-    useCallback((): void => {
-      setIsAssistantOpen(false);
-    }, []);
+    useCallback(
+      (): void => {
+        setIsAssistantOpen(
+          false,
+        );
+      },
+      [],
+    );
+
+  const closeNotifications =
+    useCallback(
+      (): void => {
+        setIsNotificationsOpen(
+          false,
+        );
+      },
+      [],
+    );
+
+  const handleNotificationRead =
+    useCallback(
+      (): void => {
+        void refreshNotifications();
+      },
+      [
+        refreshNotifications,
+      ],
+    );
 
   useClickOutside(
     containerRef,
@@ -191,46 +405,95 @@ export function QuickActionsMenu({
   );
 
   const handleLanguageChange =
-    useCallback((): void => {
-      const nextLocale: Locale =
-        locale === "es"
-          ? "en"
-          : "es";
+    useCallback(
+      (): void => {
+        const nextLocale:
+          Locale =
+            locale === "es"
+              ? "en"
+              : "es";
 
-      startLocaleTransition(() => {
-        router.replace(pathname, {
-          locale: nextLocale,
-        });
-      });
-    }, [
-      locale,
-      pathname,
-      router,
-    ]);
+        closeMenu();
+        closeNotifications();
+
+        startLocaleTransition(
+          () => {
+            router.replace(
+              pathname,
+              {
+                locale:
+                  nextLocale,
+
+                scroll:
+                  false,
+              },
+            );
+          },
+        );
+      },
+      [
+        closeMenu,
+        closeNotifications,
+        locale,
+        pathname,
+        router,
+      ],
+    );
 
   const handleActionSelect =
     useCallback(
       (
-        action: QuickAction,
+        action:
+          QuickAction,
       ): void => {
-        if (!action.isAvailable) {
+        if (
+          !action.isAvailable
+        ) {
           return;
         }
 
-        switch (action.behavior) {
+        switch (
+          action.behavior
+        ) {
           case "theme": {
             toggleTheme();
+
             return;
           }
 
           case "language": {
             handleLanguageChange();
+
             return;
           }
 
           case "assistant": {
             closeMenu();
-            setIsAssistantOpen(true);
+
+            setIsAssistantOpen(
+              true,
+            );
+
+            return;
+          }
+
+          case "notifications": {
+            closeMenu();
+
+            setIsNotificationsOpen(
+              true,
+            );
+
+            return;
+          }
+
+          case "logout": {
+            closeMenu();
+            closeNotifications();
+            closeAssistant();
+
+            void signOut();
+
             return;
           }
 
@@ -241,8 +504,11 @@ export function QuickActionsMenu({
         }
       },
       [
+        closeAssistant,
         closeMenu,
+        closeNotifications,
         handleLanguageChange,
+        signOut,
         toggleTheme,
       ],
     );
@@ -250,9 +516,12 @@ export function QuickActionsMenu({
   const handleWheel =
     useCallback(
       (
-        event: ReactWheelEvent<HTMLDivElement>,
+        event:
+          ReactWheelEvent<HTMLDivElement>,
       ): void => {
-        if (!isOpen) {
+        if (
+          !isOpen
+        ) {
           return;
         }
 
@@ -264,8 +533,9 @@ export function QuickActionsMenu({
         if (
           Math.abs(
             wheelDeltaRef.current,
-          ) <
-          QUICK_ACTIONS_LAYOUT.wheelThreshold
+          )
+          < QUICK_ACTIONS_LAYOUT
+            .wheelThreshold
         ) {
           return;
         }
@@ -278,7 +548,8 @@ export function QuickActionsMenu({
           showPrevious();
         }
 
-        wheelDeltaRef.current = 0;
+        wheelDeltaRef.current =
+          0;
       },
       [
         isOpen,
@@ -294,29 +565,52 @@ export function QuickActionsMenu({
 
   const appearanceLabel =
     resolvedTheme === "dark"
-      ? tTheme("switchToLight")
-      : tTheme("switchToDark");
+      ? themeTranslations(
+          "switchToLight",
+        )
+      : themeTranslations(
+          "switchToDark",
+        );
 
   const languageLabel =
     locale === "es"
-      ? tLanguage(
+      ? languageTranslations(
           "switchToEnglish",
         )
-      : tLanguage(
+      : languageTranslations(
           "switchToSpanish",
+        );
+
+  const notificationBadge =
+    formatNotificationBadge(
+      unreadNotificationsCount,
+    );
+
+  const triggerOpenLabel =
+    notificationBadge
+    && isAuthenticated
+      ? locale === "en"
+        ? `${translations("open")}. ${unreadNotificationsCount} unread notifications.`
+        : `${translations("open")}. ${unreadNotificationsCount} notificaciones sin leer.`
+      : translations(
+          "open",
         );
 
   return (
     <>
       <div
         {...containerProps}
-        ref={containerRef}
+        ref={
+          containerRef
+        }
         data-state={
           isOpen
             ? "open"
             : "closed"
         }
-        onWheel={handleWheel}
+        onWheel={
+          handleWheel
+        }
         className={cn(
           "fixed z-50",
 
@@ -332,46 +626,79 @@ export function QuickActionsMenu({
         )}
       >
         <div
-          id={ACTIONS_CONTAINER_ID}
-          aria-label={t("label")}
-          aria-hidden={!isOpen}
+          id={
+            ACTIONS_CONTAINER_ID
+          }
+          aria-label={
+            translations(
+              "label",
+            )
+          }
+          aria-hidden={
+            !isOpen
+          }
           className="absolute inset-0 overflow-visible"
         >
           {visibleActions.map(
-            (action, index) => {
+            (
+              action,
+              index,
+            ) => {
               const position =
-                positions[index];
+                positions[
+                  index
+                ];
 
-              if (!position) {
+              if (
+                !position
+              ) {
                 return null;
               }
 
               const isAppearance =
-                action.id ===
-                "appearance";
+                action.id
+                === "appearance";
 
               const isLanguage =
-                action.id ===
-                "language";
+                action.id
+                === "language";
 
               const isAssistant =
-                action.id ===
-                "assistant";
+                action.id
+                === "assistant";
+
+              const isNotifications =
+                action.id
+                === "notifications";
+
+              const accountActionLabel =
+                getAccountActionLabel(
+                  action.id,
+                  locale,
+                );
 
               return (
                 <QuickActionItem
-                  key={action.id}
-                  action={action}
-                  position={position}
-                  isOpen={isOpen}
+                  key={
+                    action.id
+                  }
+                  action={
+                    action
+                  }
+                  position={
+                    position
+                  }
+                  isOpen={
+                    isOpen
+                  }
                   isActive={
-                    isAssistant &&
-                    isAssistantOpen
+                    isAssistant
+                    && isAssistantOpen
                   }
                   iconOverride={
                     isAppearance
-                      ? resolvedTheme ===
-                        "dark"
+                      ? resolvedTheme
+                        === "dark"
                         ? Sun
                         : Moon
                       : undefined
@@ -379,14 +706,16 @@ export function QuickActionsMenu({
                   badge={
                     isLanguage
                       ? languageCode
-                      : undefined
+                      : isNotifications
+                        ? notificationBadge
+                        : undefined
                   }
                   labelOverride={
                     isAppearance
                       ? appearanceLabel
                       : isLanguage
                         ? languageLabel
-                        : undefined
+                        : accountActionLabel
                   }
                   onSelect={
                     handleActionSelect
@@ -399,27 +728,88 @@ export function QuickActionsMenu({
 
         <div className="relative z-50">
           <MenuTrigger
-            isOpen={isOpen}
-            openLabel={t("open")}
-            closeLabel={t("close")}
+            isOpen={
+              isOpen
+            }
+            openLabel={
+              triggerOpenLabel
+            }
+            closeLabel={
+              translations(
+                "close",
+              )
+            }
             controlsId={
               ACTIONS_CONTAINER_ID
             }
             openIcon={
               EllipsisVertical
             }
-            closeIcon={X}
+            closeIcon={
+              X
+            }
             variant="quick-actions"
             size="lg"
-            onClick={toggleMenu}
+            onClick={
+              toggleMenu
+            }
           />
+
+          {notificationBadge
+          && isAuthenticated ? (
+            <span
+              aria-hidden="true"
+              className={cn(
+                "pointer-events-none absolute -top-1.5 -right-1.5 z-[70]",
+
+                "flex h-6 min-w-6 items-center justify-center",
+
+                "rounded-full border-2 px-1.5",
+
+                "border-[#fdfefe] bg-[#4ead35]",
+
+                "text-[10px] leading-none font-bold text-white",
+
+                "shadow-[0_4px_14px_rgba(78,173,53,0.38)]",
+
+                "dark:border-[#0c0f0c]",
+
+                "dark:bg-[#57af33]",
+
+                "dark:text-[#0c0f0c]",
+              )}
+            >
+              {
+                notificationBadge
+              }
+            </span>
+          ) : null}
         </div>
       </div>
 
+      <NotificationsPanel
+        open={
+          isNotificationsOpen
+          && isAuthenticated
+        }
+        onClose={
+          closeNotifications
+        }
+        onNotificationRead={
+          handleNotificationRead
+        }
+      />
+
       <AssistantPanel
-        locale={locale}
-        isOpen={isAssistantOpen}
-        onClose={closeAssistant}
+        locale={
+          locale
+        }
+        isOpen={
+          isAssistantOpen
+        }
+        onClose={
+          closeAssistant
+        }
         showBackdrop
         closeOnBackdrop
         closeOnEscape

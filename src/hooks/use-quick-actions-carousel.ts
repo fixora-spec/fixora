@@ -1,9 +1,15 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import {
+  useCallback,
+  useMemo,
+  useState,
+} from "react";
 
-import { QUICK_ACTIONS } from "@/config/quick-actions.config";
-import { getVisibleActions } from "@/utils/get-visible-actions";
+import {
+  QUICK_ACTIONS,
+  QUICK_ACTIONS_LAYOUT,
+} from "@/config/quick-actions.config";
 
 import type {
   QuickAction,
@@ -11,8 +17,10 @@ import type {
 } from "@/types/quick-action";
 
 export type UseQuickActionsCarouselOptions = {
+  actions?: readonly QuickAction[];
   initialIndex?: number;
   step?: number;
+  visibleItems?: number;
 };
 
 export type UseQuickActionsCarouselReturn = {
@@ -20,64 +28,232 @@ export type UseQuickActionsCarouselReturn = {
   visibleActions: QuickAction[];
   showPrevious: () => void;
   showNext: () => void;
-  move: (direction: QuickActionsDirection) => void;
-  goTo: (index: number) => void;
+  move: (
+    direction: QuickActionsDirection,
+  ) => void;
+  goTo: (
+    index: number,
+  ) => void;
   reset: () => void;
 };
 
-function normalizeIndex(index: number, total: number): number {
-  if (total <= 0) {
+function normalizeIndex(
+  index: number,
+  total: number,
+): number {
+  if (
+    total <= 0
+  ) {
     return 0;
   }
 
-  return ((index % total) + total) % total;
+  return (
+    (index % total) + total
+  ) % total;
+}
+
+function normalizePositiveInteger(
+  value: number,
+  fallback: number,
+): number {
+  if (
+    !Number.isFinite(
+      value,
+    )
+    || value <= 0
+  ) {
+    return fallback;
+  }
+
+  return Math.max(
+    1,
+    Math.trunc(
+      value,
+    ),
+  );
 }
 
 export function useQuickActionsCarousel({
+  actions = QUICK_ACTIONS,
   initialIndex = 0,
   step = 1,
+  visibleItems =
+    QUICK_ACTIONS_LAYOUT.visibleItems,
 }: UseQuickActionsCarouselOptions = {}): UseQuickActionsCarouselReturn {
-  const totalActions = QUICK_ACTIONS.length;
-  const safeStep = Math.max(1, Math.trunc(step));
+  const totalActions =
+    actions.length;
 
-  const [startIndex, setStartIndex] = useState(() =>
-    normalizeIndex(initialIndex, totalActions),
+  const safeStep =
+    normalizePositiveInteger(
+      step,
+      1,
+    );
+
+  const safeVisibleItems =
+    totalActions === 0
+      ? 0
+      : Math.min(
+          totalActions,
+          normalizePositiveInteger(
+            visibleItems,
+            QUICK_ACTIONS_LAYOUT.visibleItems,
+          ),
+        );
+
+  const [
+    storedStartIndex,
+    setStoredStartIndex,
+  ] = useState(
+    () =>
+      normalizeIndex(
+        initialIndex,
+        totalActions,
+      ),
   );
 
-  const visibleActions = useMemo(
-    () => getVisibleActions(startIndex),
-    [startIndex],
-  );
+  const startIndex =
+    normalizeIndex(
+      storedStartIndex,
+      totalActions,
+    );
 
-  const move = useCallback(
-    (direction: QuickActionsDirection): void => {
-      const offset = direction === "next" ? safeStep : -safeStep;
+  const visibleActions =
+    useMemo<QuickAction[]>(
+      () => {
+        if (
+          totalActions === 0
+          || safeVisibleItems === 0
+        ) {
+          return [];
+        }
 
-      setStartIndex((currentIndex) =>
-        normalizeIndex(currentIndex + offset, totalActions),
-      );
-    },
-    [safeStep, totalActions],
-  );
+        const result:
+          QuickAction[] = [];
 
-  const showPrevious = useCallback((): void => {
-    move("previous");
-  }, [move]);
+        for (
+          let offset = 0;
+          offset < safeVisibleItems;
+          offset += 1
+        ) {
+          const actionIndex =
+            normalizeIndex(
+              startIndex + offset,
+              totalActions,
+            );
 
-  const showNext = useCallback((): void => {
-    move("next");
-  }, [move]);
+          const action =
+            actions[
+              actionIndex
+            ];
 
-  const goTo = useCallback(
-    (index: number): void => {
-      setStartIndex(normalizeIndex(index, totalActions));
-    },
-    [totalActions],
-  );
+          if (
+            action
+          ) {
+            result.push(
+              action,
+            );
+          }
+        }
 
-  const reset = useCallback((): void => {
-    setStartIndex(normalizeIndex(initialIndex, totalActions));
-  }, [initialIndex, totalActions]);
+        return result;
+      },
+      [
+        actions,
+        safeVisibleItems,
+        startIndex,
+        totalActions,
+      ],
+    );
+
+  const move =
+    useCallback(
+      (
+        direction:
+          QuickActionsDirection,
+      ): void => {
+        if (
+          totalActions === 0
+        ) {
+          return;
+        }
+
+        const offset =
+          direction === "next"
+            ? safeStep
+            : -safeStep;
+
+        setStoredStartIndex(
+          (
+            currentIndex,
+          ) =>
+            normalizeIndex(
+              currentIndex + offset,
+              totalActions,
+            ),
+        );
+      },
+      [
+        safeStep,
+        totalActions,
+      ],
+    );
+
+  const showPrevious =
+    useCallback(
+      (): void => {
+        move(
+          "previous",
+        );
+      },
+      [
+        move,
+      ],
+    );
+
+  const showNext =
+    useCallback(
+      (): void => {
+        move(
+          "next",
+        );
+      },
+      [
+        move,
+      ],
+    );
+
+  const goTo =
+    useCallback(
+      (
+        index: number,
+      ): void => {
+        setStoredStartIndex(
+          normalizeIndex(
+            index,
+            totalActions,
+          ),
+        );
+      },
+      [
+        totalActions,
+      ],
+    );
+
+  const reset =
+    useCallback(
+      (): void => {
+        setStoredStartIndex(
+          normalizeIndex(
+            initialIndex,
+            totalActions,
+          ),
+        );
+      },
+      [
+        initialIndex,
+        totalActions,
+      ],
+    );
 
   return {
     startIndex,

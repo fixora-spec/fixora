@@ -9,7 +9,7 @@ export const ASSISTANT_KNOWLEDGE_ES = [
     summary:
       "Fixora es una plataforma orientada a soluciones tecnológicas, recursos digitales y asistencia técnica.",
     content:
-      "Fixora reúne recursos gráficos, software y licencias, productos de hardware, servicios técnicos, soporte remoto, planes, promociones y contenido de ayuda. Su objetivo es facilitar el acceso a soluciones tecnológicas desde una sola plataforma.",
+      "Fixora reúne recursos gráficos, software y licencias, productos de hardware, servicios técnicos, soporte remoto, planes, promociones, contenido de ayuda y orientación sobre el uso de cuentas. Su objetivo es facilitar el acceso a soluciones tecnológicas desde una sola plataforma.",
     keywords: [
       "fixora",
       "qué es fixora",
@@ -21,6 +21,9 @@ export const ASSISTANT_KNOWLEDGE_ES = [
       "soluciones tecnologicas",
       "servicios",
       "productos",
+      "cuenta fixora",
+      "autenticación",
+      "autenticacion",
     ],
     href: "/",
     priority: 10,
@@ -163,7 +166,7 @@ export const ASSISTANT_KNOWLEDGE_ES = [
     summary:
       "Atención técnica a distancia para revisar y resolver problemas de software.",
     content:
-      "El soporte remoto permite recibir asistencia técnica a distancia cuando el problema puede revisarse mediante una conexión autorizada. Es útil para configuraciones, instalación de programas, errores de software y orientación técnica. El usuario debe autorizar la conexión y no debe compartir contraseñas personales o información bancaria.",
+      "El soporte remoto permite recibir asistencia técnica a distancia cuando el problema puede revisarse mediante una conexión autorizada. Es útil para configuraciones, instalación de programas, errores de software y orientación técnica. El usuario debe autorizar la conexión y no debe compartir contraseñas personales, códigos de verificación, tokens de sesión ni información bancaria.",
     keywords: [
       "soporte remoto",
       "ayuda remota",
@@ -175,6 +178,7 @@ export const ASSISTANT_KNOWLEDGE_ES = [
       "configuración",
       "configuracion",
       "ayuda a distancia",
+      "seguridad soporte remoto",
     ],
     href: "/soporte-remoto",
     priority: 10,
@@ -204,14 +208,50 @@ export const ASSISTANT_KNOWLEDGE_ES = [
     priority: 8,
   },
   {
+    id: "es-cuentas-autenticacion",
+    locale: "es",
+    section: "help-center",
+    title: "Cuentas, acceso y seguridad",
+    summary:
+      "Orientación sobre registro, inicio de sesión, verificación de correo, recuperación de contraseña y acceso administrativo.",
+    content:
+      "El asistente de Fixora puede explicar cómo crear una cuenta de usuario, comprobar un nombre público, iniciar sesión, verificar el correo y recuperar una contraseña. El registro público es únicamente para usuarios; las cuentas administrativas son creadas por la empresa y requieren un correo real. El asistente no registra cuentas, no reserva nombres, no inicia sesiones y no cambia contraseñas. Nunca se deben enviar contraseñas reales, códigos de seis caracteres, enlaces privados ni tokens de sesión dentro del chat.",
+    keywords: [
+      "crear cuenta",
+      "registrarme",
+      "registro de usuario",
+      "iniciar sesión",
+      "iniciar sesion",
+      "acceder a mi cuenta",
+      "nombre de usuario",
+      "nombre público",
+      "nombre publico",
+      "usuario disponible",
+      "verificar correo",
+      "código de verificación",
+      "codigo de verificacion",
+      "reenviar código",
+      "reenviar codigo",
+      "olvidé mi contraseña",
+      "olvide mi contraseña",
+      "recuperar contraseña",
+      "restablecer contraseña",
+      "acceso administrador",
+      "cuenta administrativa",
+      "contraseña segura",
+      "contrasena segura",
+    ],
+    priority: 12,
+  },
+  {
     id: "es-centro-ayuda",
     locale: "es",
     section: "help-center",
     title: "Centro de Ayuda",
     summary:
-      "Sección para resolver dudas frecuentes sobre productos, servicios y uso de Fixora.",
+      "Sección para resolver dudas frecuentes sobre productos, servicios, cuentas y uso de Fixora.",
     content:
-      "El Centro de Ayuda está destinado a responder preguntas frecuentes, explicar procesos y orientar al usuario sobre productos, servicios, compras, soporte y funcionamiento de la plataforma. Cuando una respuesta requiera revisar un caso particular, será necesario comunicarse mediante la sección Contacto.",
+      "El Centro de Ayuda está destinado a responder preguntas frecuentes, explicar procesos y orientar al usuario sobre productos, servicios, compras, soporte, cuentas y funcionamiento de la plataforma. Cuando una respuesta requiera revisar un caso particular, será necesario comunicarse mediante la sección Contacto.",
     keywords: [
       "centro de ayuda",
       "ayuda",
@@ -223,6 +263,8 @@ export const ASSISTANT_KNOWLEDGE_ES = [
       "como funciona",
       "orientación",
       "orientacion",
+      "ayuda con mi cuenta",
+      "problema de acceso",
     ],
     href: "/centro-de-ayuda",
     priority: 9,
@@ -235,7 +277,7 @@ export const ASSISTANT_KNOWLEDGE_ES = [
     summary:
       "Canal para realizar consultas específicas y solicitar atención personalizada.",
     content:
-      "La sección Contacto permite enviar consultas relacionadas con productos, recursos, licencias, servicios técnicos y soporte remoto. Los datos oficiales de atención y los medios disponibles se mostrarán dentro de esa sección. El asistente no debe inventar números telefónicos, correos, horarios ni direcciones que no estén publicados.",
+      "La sección Contacto permite enviar consultas relacionadas con productos, recursos, licencias, servicios técnicos, soporte remoto y problemas de cuenta que necesiten revisión humana. Los datos oficiales de atención y los medios disponibles se mostrarán dentro de esa sección. El asistente no debe inventar números telefónicos, correos, horarios ni direcciones que no estén publicados.",
     keywords: [
       "contacto",
       "contactar",
@@ -249,6 +291,8 @@ export const ASSISTANT_KNOWLEDGE_ES = [
       "whatsapp",
       "dirección",
       "direccion",
+      "ayuda humana",
+      "problema con mi cuenta",
     ],
     href: "/contacto",
     priority: 10,

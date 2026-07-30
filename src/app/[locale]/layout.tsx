@@ -20,6 +20,14 @@ import {
 } from "@/components/organisms/app-preloader";
 
 import {
+  ApplicationBootstrap,
+} from "@/components/organisms/application-bootstrap";
+
+import {
+  AuthenticationGateway,
+} from "@/components/organisms/authentication-gateway";
+
+import {
   routing,
 } from "@/i18n/routing";
 
@@ -34,16 +42,21 @@ import type {
 import "../globals.css";
 
 type LocaleLayoutProps = Readonly<{
-  children: ReactNode;
+  children:
+    ReactNode;
 
-  params: Promise<{
-    locale: string;
-  }>;
+  params:
+    Promise<{
+      locale:
+        string;
+    }>;
 }>;
 
 export function generateStaticParams() {
   return routing.locales.map(
-    (locale) => ({
+    (
+      locale,
+    ) => ({
       locale,
     }),
   );
@@ -66,7 +79,9 @@ export default async function LocaleLayout({
     notFound();
   }
 
-  setRequestLocale(locale);
+  setRequestLocale(
+    locale,
+  );
 
   const preloaderLocale =
     locale as PreloaderLocale;
@@ -103,6 +118,13 @@ export default async function LocaleLayout({
               showParticleRing
               showProgress
             />
+
+            <ApplicationBootstrap
+              preloaderCompleted
+              automaticAuthenticationEnabled
+            >
+              <AuthenticationGateway />
+            </ApplicationBootstrap>
 
             {children}
           </AppProviders>

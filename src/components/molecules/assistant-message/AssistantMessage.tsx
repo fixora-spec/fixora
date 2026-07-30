@@ -2,21 +2,29 @@
 
 import {
   useEffect,
+  useRef,
   useState,
 } from "react";
 
 import {
   ArrowUpRight,
+  Check,
   CircleAlert,
   Clock3,
+  Copy,
 } from "lucide-react";
 
 import {
   useReducedMotion,
 } from "motion/react";
 
-import { AssistantAvatar } from "@/components/atoms/assistant-avatar";
-import { cn } from "@/utils/cn";
+import {
+  AssistantAvatar,
+} from "@/components/atoms/assistant-avatar";
+
+import {
+  cn,
+} from "@/utils/cn";
 
 import type {
   AssistantLocale,
@@ -32,6 +40,12 @@ type MessageLabels = {
   sources: string;
   sending: string;
   error: string;
+  tools: string;
+  passwords: string;
+  aliases: string;
+  copyPassword: string;
+  copyAlias: string;
+  copied: string;
 };
 
 const MESSAGE_LABELS: Record<
@@ -39,34 +53,99 @@ const MESSAGE_LABELS: Record<
   MessageLabels
 > = {
   es: {
-    assistant: "Asistente Fixora",
-    user: "Tú",
-    sources: "Fuentes relacionadas",
-    sending: "Enviando...",
+    assistant:
+      "Asistente Fixora",
+
+    user:
+      "Tú",
+
+    sources:
+      "Fuentes relacionadas",
+
+    sending:
+      "Enviando...",
+
     error:
       "No se pudo completar la respuesta",
+
+    tools:
+      "Herramientas del asistente",
+
+    passwords:
+      "Contraseñas generadas",
+
+    aliases:
+      "Nombres sugeridos",
+
+    copyPassword:
+      "Copiar contraseña",
+
+    copyAlias:
+      "Copiar nombre sugerido",
+
+    copied:
+      "Copiado",
   },
 
   en: {
-    assistant: "Fixora Assistant",
-    user: "You",
-    sources: "Related sources",
-    sending: "Sending...",
+    assistant:
+      "Fixora Assistant",
+
+    user:
+      "You",
+
+    sources:
+      "Related sources",
+
+    sending:
+      "Sending...",
+
     error:
       "The response could not be completed",
+
+    tools:
+      "Assistant tools",
+
+    passwords:
+      "Generated passwords",
+
+    aliases:
+      "Suggested names",
+
+    copyPassword:
+      "Copy password",
+
+    copyAlias:
+      "Copy suggested name",
+
+    copied:
+      "Copied",
   },
 };
 
-const TYPE_INTERVAL_MS = 42;
-const MAX_TYPING_DURATION_MS = 4000;
+const TYPE_INTERVAL_MS =
+  42;
+
+const MAX_TYPING_DURATION_MS =
+  4_000;
+
+const COPY_CONFIRMATION_DURATION_MS =
+  1_500;
 
 function formatMessageTime(
   timestamp: number,
   locale: AssistantLocale,
 ): string {
-  const date = new Date(timestamp);
+  const date =
+    new Date(
+      timestamp,
+    );
 
-  if (Number.isNaN(date.getTime())) {
+  if (
+    Number.isNaN(
+      date.getTime(),
+    )
+  ) {
     return "";
   }
 
@@ -75,32 +154,40 @@ function formatMessageTime(
       ? "es-PE"
       : "en-US",
     {
-      hour: "2-digit",
-      minute: "2-digit",
+      hour:
+        "2-digit",
+
+      minute:
+        "2-digit",
     },
-  ).format(date);
+  ).format(
+    date,
+  );
 }
 
 function getTypingStep(
   contentLength: number,
 ): number {
-  if (contentLength <= 0) {
+  if (
+    contentLength <= 0
+  ) {
     return 1;
   }
 
-  const maximumIterations = Math.max(
-    1,
-    Math.floor(
-      MAX_TYPING_DURATION_MS /
-        TYPE_INTERVAL_MS,
-    ),
-  );
+  const maximumIterations =
+    Math.max(
+      1,
+      Math.floor(
+        MAX_TYPING_DURATION_MS
+        / TYPE_INTERVAL_MS,
+      ),
+    );
 
   return Math.max(
     1,
     Math.ceil(
-      contentLength /
-        maximumIterations,
+      contentLength
+      / maximumIterations,
     ),
   );
 }
@@ -113,122 +200,181 @@ export function AssistantMessage({
   sourcesLabel,
   sendingLabel,
   errorLabel,
+  toolsLabel,
+  passwordSuggestionsLabel,
+  aliasSuggestionsLabel,
+  copyPasswordLabel,
+  copyAliasLabel,
+  copiedLabel,
   showTimestamp = true,
   className,
-  ...articleProps
+  ...articleProperties
 }: AssistantMessageProps) {
   const prefersReducedMotion =
     useReducedMotion();
 
   const defaultLabels =
-    MESSAGE_LABELS[locale];
+    MESSAGE_LABELS[
+      locale
+    ];
 
   const isAssistant =
-    message.role === "assistant";
+    message.role
+    === "assistant";
 
   const isSending =
-    message.status === "sending";
+    message.status
+    === "sending";
 
   const isError =
-    message.status === "error";
+    message.status
+    === "error";
 
   /*
    * Los mensajes escritos por el usuario
-   * permanecen exactamente como los escribió.
+   * permanecen exactamente como fueron enviados.
    *
-   * Los mensajes del asistente cambian según
-   * el idioma actualmente seleccionado.
+   * Los mensajes del asistente pueden cambiar
+   * entre español e inglés.
    */
   const displayedContent =
     isAssistant
-      ? message.translations?.[locale] ??
-        message.content
+      ? (
+          message
+            .translations?.[
+              locale
+            ]
+          ?? message.content
+        )
       : message.content;
 
   /*
-   * Guarda mediante estado el contenido con
-   * el que se montó inicialmente el mensaje.
+   * Guarda el contenido con el cual se montó
+   * inicialmente el mensaje.
    *
-   * No se utiliza useRef porque React 19 no
-   * permite leer referencias durante el render.
+   * Cuando cambia el idioma no se vuelve a
+   * ejecutar la animación de escritura.
    */
-  const [initialTypingContent] =
+  const [
+    initialTypingContent,
+  ] =
     useState<string>(
-      () => displayedContent,
+      () =>
+        displayedContent,
     );
 
   const shouldAnimateText =
-    isAssistant &&
-    !isSending &&
-    !isError &&
-    !prefersReducedMotion &&
-    displayedContent.length > 0 &&
-    displayedContent ===
-      initialTypingContent;
+    isAssistant
+    && !isSending
+    && !isError
+    && !prefersReducedMotion
+    && displayedContent.length > 0
+    && displayedContent
+      === initialTypingContent;
 
   const [
     visibleCharacterCount,
     setVisibleCharacterCount,
-  ] = useState<number>(() =>
-    shouldAnimateText
-      ? 0
-      : displayedContent.length,
+  ] =
+    useState<number>(
+      () =>
+        shouldAnimateText
+          ? 0
+          : displayedContent.length,
+    );
+
+  const [
+    copiedValue,
+    setCopiedValue,
+  ] =
+    useState<
+      string | null
+    >(
+      null,
+    );
+
+  const copyResetTimeoutReference =
+    useRef<
+      number | null
+    >(
+      null,
+    );
+
+  useEffect(
+    () => {
+      if (
+        !shouldAnimateText
+        || initialTypingContent.length
+          === 0
+      ) {
+        return undefined;
+      }
+
+      const typingStep =
+        getTypingStep(
+          initialTypingContent.length,
+        );
+
+      const intervalIdentifier =
+        window.setInterval(
+          () => {
+            setVisibleCharacterCount(
+              (
+                currentCount,
+              ) => {
+                const nextCount =
+                  Math.min(
+                    initialTypingContent.length,
+                    currentCount
+                    + typingStep,
+                  );
+
+                if (
+                  nextCount
+                  >= initialTypingContent.length
+                ) {
+                  window.clearInterval(
+                    intervalIdentifier,
+                  );
+                }
+
+                return nextCount;
+              },
+            );
+          },
+          TYPE_INTERVAL_MS,
+        );
+
+      return () => {
+        window.clearInterval(
+          intervalIdentifier,
+        );
+      };
+    },
+    [
+      initialTypingContent,
+      shouldAnimateText,
+    ],
   );
 
-  useEffect(() => {
-    if (
-      !shouldAnimateText ||
-      initialTypingContent.length === 0
-    ) {
-      return;
-    }
+  useEffect(
+    () => {
+      return () => {
+        if (
+          copyResetTimeoutReference
+            .current
+          !== null
+        ) {
+          window.clearTimeout(
+            copyResetTimeoutReference
+              .current,
+          );
+        }
+      };
+    },
+    [],
+  );
 
-    const typingStep =
-      getTypingStep(
-        initialTypingContent.length,
-      );
-
-    const intervalId =
-      window.setInterval(() => {
-        setVisibleCharacterCount(
-          (currentCount) => {
-            const nextCount = Math.min(
-              initialTypingContent.length,
-              currentCount +
-                typingStep,
-            );
-
-            if (
-              nextCount >=
-              initialTypingContent.length
-            ) {
-              window.clearInterval(
-                intervalId,
-              );
-            }
-
-            return nextCount;
-          },
-        );
-      }, TYPE_INTERVAL_MS);
-
-    return () => {
-      window.clearInterval(
-        intervalId,
-      );
-    };
-  }, [
-    initialTypingContent,
-    shouldAnimateText,
-  ]);
-
-  /*
-   * Al cambiar el idioma, displayedContent ya
-   * no coincide con initialTypingContent.
-   *
-   * En ese caso la traducción se muestra completa
-   * inmediatamente, sin volver a escribirla.
-   */
   const visibleContent =
     shouldAnimateText
       ? displayedContent.slice(
@@ -238,28 +384,58 @@ export function AssistantMessage({
       : displayedContent;
 
   const isTyping =
-    shouldAnimateText &&
-    visibleCharacterCount <
-      displayedContent.length;
+    shouldAnimateText
+    && visibleCharacterCount
+      < displayedContent.length;
 
   const resolvedAuthorLabel =
     isAssistant
-      ? assistantLabel ??
-        defaultLabels.assistant
-      : userLabel ??
-        defaultLabels.user;
+      ? (
+          assistantLabel
+          ?? defaultLabels
+            .assistant
+        )
+      : (
+          userLabel
+          ?? defaultLabels
+            .user
+        );
 
   const resolvedSourcesLabel =
-    sourcesLabel ??
-    defaultLabels.sources;
+    sourcesLabel
+    ?? defaultLabels.sources;
 
   const resolvedSendingLabel =
-    sendingLabel ??
-    defaultLabels.sending;
+    sendingLabel
+    ?? defaultLabels.sending;
 
   const resolvedErrorLabel =
-    errorLabel ??
-    defaultLabels.error;
+    errorLabel
+    ?? defaultLabels.error;
+
+  const resolvedToolsLabel =
+    toolsLabel
+    ?? defaultLabels.tools;
+
+  const resolvedPasswordSuggestionsLabel =
+    passwordSuggestionsLabel
+    ?? defaultLabels.passwords;
+
+  const resolvedAliasSuggestionsLabel =
+    aliasSuggestionsLabel
+    ?? defaultLabels.aliases;
+
+  const resolvedCopyPasswordLabel =
+    copyPasswordLabel
+    ?? defaultLabels.copyPassword;
+
+  const resolvedCopyAliasLabel =
+    copyAliasLabel
+    ?? defaultLabels.copyAlias;
+
+  const resolvedCopiedLabel =
+    copiedLabel
+    ?? defaultLabels.copied;
 
   const formattedTime =
     formatMessageTime(
@@ -267,12 +443,88 @@ export function AssistantMessage({
       locale,
     );
 
+  const passwordSuggestions =
+    message
+      .tools
+      ?.passwordSuggestions
+    ?? [];
+
+  const aliasSuggestions =
+    message
+      .tools
+      ?.aliasSuggestions
+    ?? [];
+
+  const hasAssistantTools =
+    passwordSuggestions.length > 0
+    || aliasSuggestions.length > 0;
+
+  const handleCopyValue =
+    async (
+      value: string,
+    ): Promise<void> => {
+      try {
+        if (
+          typeof navigator
+            .clipboard
+            ?.writeText
+          !== "function"
+        ) {
+          return;
+        }
+
+        await navigator
+          .clipboard
+          .writeText(
+            value,
+          );
+
+        setCopiedValue(
+          value,
+        );
+
+        if (
+          copyResetTimeoutReference
+            .current
+          !== null
+        ) {
+          window.clearTimeout(
+            copyResetTimeoutReference
+              .current,
+          );
+        }
+
+        copyResetTimeoutReference.current =
+          window.setTimeout(
+            () => {
+              setCopiedValue(
+                null,
+              );
+
+              copyResetTimeoutReference.current =
+                null;
+            },
+            COPY_CONFIRMATION_DURATION_MS,
+          );
+      } catch {
+        setCopiedValue(
+          null,
+        );
+      }
+    };
+
   return (
     <article
-      {...articleProps}
-      data-role={message.role}
-      data-status={message.status}
-      aria-label={resolvedAuthorLabel}
+      {...articleProperties}
+      data-role={
+        message.role
+      }
+      data-status={
+        message.status
+      }
+      aria-label={
+        resolvedAuthorLabel
+      }
       className={cn(
         "flex w-full gap-2.5",
 
@@ -286,7 +538,9 @@ export function AssistantMessage({
       {isAssistant ? (
         <AssistantAvatar
           size="sm"
-          isActive={!isError}
+          isActive={
+            !isError
+          }
           decorative
           className="mt-1"
         />
@@ -324,7 +578,9 @@ export function AssistantMessage({
                 ],
           )}
         >
-          {resolvedAuthorLabel}
+          {
+            resolvedAuthorLabel
+          }
         </span>
 
         <div
@@ -368,10 +624,11 @@ export function AssistantMessage({
                   "dark:shadow-[0_8px_24px_rgba(87,175,51,0.20)]",
                 ],
 
-            isSending &&
-              "opacity-70",
+            isSending
+            && "opacity-70",
 
-            isError && [
+            isError
+            && [
               "border-[#cf3f3f]/25",
               "bg-[#cf3f3f]/[0.07]",
               "text-[#9f2929]",
@@ -393,17 +650,23 @@ export function AssistantMessage({
               <CircleAlert
                 aria-hidden="true"
                 className="size-4 shrink-0"
-                strokeWidth={2}
+                strokeWidth={
+                  2
+                }
               />
 
               <span>
-                {resolvedErrorLabel}
+                {
+                  resolvedErrorLabel
+                }
               </span>
             </div>
           ) : null}
 
           <p className="whitespace-pre-wrap break-words">
-            {visibleContent}
+            {
+              visibleContent
+            }
 
             {isTyping ? (
               <span
@@ -453,16 +716,182 @@ export function AssistantMessage({
               />
 
               <span>
-                {resolvedSendingLabel}
+                {
+                  resolvedSendingLabel
+                }
               </span>
             </div>
           ) : null}
         </div>
 
-        {isAssistant &&
-        message.sources &&
-        message.sources.length > 0 &&
-        !isTyping ? (
+        {isAssistant
+        && hasAssistantTools
+        && !isTyping ? (
+          <section
+            aria-label={
+              resolvedToolsLabel
+            }
+          >
+            {passwordSuggestions.length
+            > 0 ? (
+              <div>
+                <p>
+                  {
+                    resolvedPasswordSuggestionsLabel
+                  }
+                </p>
+
+                <ol>
+                  {passwordSuggestions.map(
+                    (
+                      value,
+                      index,
+                    ) => {
+                      const wasCopied =
+                        copiedValue
+                        === value;
+
+                      return (
+                        <li
+                          key={
+                            `${value}-${index}`
+                          }
+                        >
+                          <code>
+                            {
+                              value
+                            }
+                          </code>
+
+                          {" "}
+
+                          <button
+                            type="button"
+                            aria-label={
+                              wasCopied
+                                ? resolvedCopiedLabel
+                                : resolvedCopyPasswordLabel
+                            }
+                            title={
+                              wasCopied
+                                ? resolvedCopiedLabel
+                                : resolvedCopyPasswordLabel
+                            }
+                            onClick={
+                              () => {
+                                void handleCopyValue(
+                                  value,
+                                );
+                              }
+                            }
+                          >
+                            {wasCopied ? (
+                              <Check
+                                aria-hidden="true"
+                                size={
+                                  16
+                                }
+                              />
+                            ) : (
+                              <Copy
+                                aria-hidden="true"
+                                size={
+                                  16
+                                }
+                              />
+                            )}
+                          </button>
+                        </li>
+                      );
+                    },
+                  )}
+                </ol>
+              </div>
+            ) : null}
+
+            {aliasSuggestions.length
+            > 0 ? (
+              <div>
+                <p>
+                  {
+                    resolvedAliasSuggestionsLabel
+                  }
+                </p>
+
+                <ul>
+                  {aliasSuggestions.map(
+                    (
+                      value,
+                      index,
+                    ) => {
+                      const wasCopied =
+                        copiedValue
+                        === value;
+
+                      return (
+                        <li
+                          key={
+                            `${value}-${index}`
+                          }
+                        >
+                          <code>
+                            {
+                              value
+                            }
+                          </code>
+
+                          {" "}
+
+                          <button
+                            type="button"
+                            aria-label={
+                              wasCopied
+                                ? resolvedCopiedLabel
+                                : resolvedCopyAliasLabel
+                            }
+                            title={
+                              wasCopied
+                                ? resolvedCopiedLabel
+                                : resolvedCopyAliasLabel
+                            }
+                            onClick={
+                              () => {
+                                void handleCopyValue(
+                                  value,
+                                );
+                              }
+                            }
+                          >
+                            {wasCopied ? (
+                              <Check
+                                aria-hidden="true"
+                                size={
+                                  16
+                                }
+                              />
+                            ) : (
+                              <Copy
+                                aria-hidden="true"
+                                size={
+                                  16
+                                }
+                              />
+                            )}
+                          </button>
+                        </li>
+                      );
+                    },
+                  )}
+                </ul>
+              </div>
+            ) : null}
+          </section>
+        ) : null}
+
+        {isAssistant
+        && message.sources
+        && message.sources.length > 0
+        && !isTyping ? (
           <div className="mt-2 w-full px-1">
             <p
               className={cn(
@@ -476,16 +905,24 @@ export function AssistantMessage({
                 "dark:text-[#a9afa9]",
               )}
             >
-              {resolvedSourcesLabel}
+              {
+                resolvedSourcesLabel
+              }
             </p>
 
             <div className="flex flex-wrap gap-1.5">
               {message.sources.map(
-                (source) =>
+                (
+                  source,
+                ) =>
                   source.href ? (
                     <a
-                      key={source.id}
-                      href={source.href}
+                      key={
+                        source.id
+                      }
+                      href={
+                        source.href
+                      }
                       className={cn(
                         "inline-flex min-w-0",
                         "items-center gap-1",
@@ -530,18 +967,24 @@ export function AssistantMessage({
                       )}
                     >
                       <span className="truncate">
-                        {source.title}
+                        {
+                          source.title
+                        }
                       </span>
 
                       <ArrowUpRight
                         aria-hidden="true"
                         className="size-3 shrink-0"
-                        strokeWidth={2}
+                        strokeWidth={
+                          2
+                        }
                       />
                     </a>
                   ) : (
                     <span
-                      key={source.id}
+                      key={
+                        source.id
+                      }
                       className={cn(
                         "inline-flex min-w-0",
                         "items-center",
@@ -564,7 +1007,9 @@ export function AssistantMessage({
                       )}
                     >
                       <span className="truncate">
-                        {source.title}
+                        {
+                          source.title
+                        }
                       </span>
                     </span>
                   ),
@@ -573,13 +1018,15 @@ export function AssistantMessage({
           </div>
         ) : null}
 
-        {showTimestamp &&
-        formattedTime &&
-        !isTyping ? (
+        {showTimestamp
+        && formattedTime
+        && !isTyping ? (
           <time
-            dateTime={new Date(
-              message.createdAt,
-            ).toISOString()}
+            dateTime={
+              new Date(
+                message.createdAt,
+              ).toISOString()
+            }
             suppressHydrationWarning
             className={cn(
               "mt-1.5 inline-flex",
@@ -596,11 +1043,17 @@ export function AssistantMessage({
             <Clock3
               aria-hidden="true"
               className="size-2.5"
-              strokeWidth={1.8}
+              strokeWidth={
+                1.8
+              }
             />
 
-            <span suppressHydrationWarning>
-              {formattedTime}
+            <span
+              suppressHydrationWarning
+            >
+              {
+                formattedTime
+              }
             </span>
           </time>
         ) : null}

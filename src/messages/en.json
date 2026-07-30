@@ -17,7 +17,8 @@
     "contact": "Contact",
     "signIn": "Sign in",
     "openMenu": "Open navigation menu",
-    "closeMenu": "Close navigation menu"
+    "closeMenu": "Close navigation menu",
+    "authenticatedAs": "Signed in as {name}"
   },
   "quickActions": {
     "label": "Quick actions",
@@ -31,7 +32,11 @@
     "information": "Information",
     "previous": "Show previous actions",
     "next": "Show next actions",
-    "comingSoon": "Coming soon"
+    "comingSoon": "Coming soon",
+    "profile": "Profile",
+    "notifications": "Notifications",
+    "cart": "Shopping cart",
+    "logout": "Sign out"
   },
   "theme": {
     "light": "Light mode",
@@ -52,6 +57,456 @@
     "close": "Close",
     "back": "Back",
     "previous": "Previous",
-    "next": "Next"
+    "next": "Next",
+    "continue": "Continue",
+    "cancel": "Cancel",
+    "save": "Save",
+    "loading": "Loading…",
+    "retry": "Try again",
+    "copy": "Copy",
+    "copied": "Copied"
+  },
+  "auth": {
+    "views": {
+      "login": {
+        "title": "Sign in"
+      },
+      "register": {
+        "title": "Create account"
+      },
+      "verify-email": {
+        "title": "Verify email"
+      },
+      "forgot-password": {
+        "title": "Recover password"
+      },
+      "reset-password": {
+        "title": "Create new password"
+      }
+    },
+    "administratorViews": {
+      "login": {
+        "title": "Administrator access"
+      },
+      "forgot-password": {
+        "title": "Recover administrator password"
+      },
+      "reset-password": {
+        "title": "New administrator password"
+      }
+    },
+    "close": "Close",
+    "email": "Email address",
+    "password": "Password",
+    "newPassword": "New password",
+    "repeatPassword": "Repeat password",
+    "firstName": "First name",
+    "lastName": "Last name",
+    "displayName": "Display name",
+    "signIn": "Sign in",
+    "administratorSignIn": "Sign in as administrator",
+    "createAccount": "Create an account",
+    "register": "Register",
+    "forgotPassword": "I forgot my password",
+    "administratorAccess": "Access as administrator",
+    "backToUserAccess": "Back to user access",
+    "backToLogin": "Back to sign in",
+    "checkAlias": "Check display name",
+    "aliasAvailable": "The display name is available.",
+    "aliasSuggestions": "Suggested available display names",
+    "aliasReason": {
+      "available": "The display name is available.",
+      "taken": "The display name is already registered.",
+      "too-similar": "The display name is too similar to an existing one.",
+      "invalid": "The display name does not meet the allowed rules."
+    },
+    "passwordStrength": "Strength",
+    "strength": {
+      "empty": "No password",
+      "weak": "Weak",
+      "medium": "Medium",
+      "strong": "Strong"
+    },
+    "passwordRequirements": "Use 8 to 128 characters and include uppercase letters, lowercase letters, numbers, and symbols, without spaces.",
+    "verificationExplanation": "Enter the 6-character code sent to your email. Do not share this code with anyone.",
+    "verificationCode": "Verification code",
+    "verify": "Verify email",
+    "resendCode": "Resend code",
+    "recoveryExplanation": "Enter the account email. If applicable, you will receive a code to create a new password.",
+    "sendRecoveryCode": "Send recovery code",
+    "resetPassword": "Update password",
+    "processing": "Processing…",
+    "genericError": "The operation could not be completed.",
+    "administratorNotice": "Administrator access is only available to accounts created by the company.",
+    "aliasSelected": "Display name selected: {alias}.",
+    "gateway": {
+      "dialogLabel": "Fixora access",
+      "close": "Close access",
+      "back": "Back",
+      "userAccess": "User access",
+      "administratorAccess": "Administrator access"
+    },
+    "authenticationGateway": {
+      "dialogLabel": "Fixora access",
+      "close": "Close access",
+      "back": "Back"
+    },
+    "userSignIn": {
+      "title": "Sign in",
+      "description": "Sign in with the email address and password of your verified account.",
+      "email": {
+        "label": "Email address",
+        "placeholder": "name@example.com"
+      },
+      "password": {
+        "label": "Password",
+        "placeholder": "Enter your password"
+      },
+      "actions": {
+        "submitting": "Signing in…",
+        "submit": "Sign in",
+        "forgotPassword": "I forgot my password",
+        "register": "Create an account",
+        "adminAccess": "Administrator access"
+      },
+      "errors": {
+        "requiredFields": "Enter your email address and password.",
+        "invalidCredentials": "The email address or password is incorrect.",
+        "emailNotVerified": "You must verify your email before signing in.",
+        "tooManyAttempts": "Too many attempts were made. Wait a few minutes and try again.",
+        "unknown": "Unable to sign in. Please try again."
+      }
+    },
+    "userRegistration": {
+      "title": "Create an account",
+      "description": "Complete your details and verify your email to activate the account.",
+      "firstNames": {
+        "label": "First name",
+        "placeholder": "Enter your first name"
+      },
+      "lastNames": {
+        "label": "Last name",
+        "placeholder": "Enter your last name"
+      },
+      "username": {
+        "label": "Display name",
+        "placeholder": "Choose a public name",
+        "hint": "It will be publicly visible and must be unique.",
+        "checking": "Checking availability…",
+        "available": "The name is available.",
+        "unavailable": "The name is not available.",
+        "invalid": "Use only letters, numbers, periods, hyphens, or underscores.",
+        "suggestions": "Available suggestions",
+        "status": {
+          "checking": "Checking availability…",
+          "available": "The display name is available.",
+          "taken": "The display name is already registered.",
+          "tooSimilar": "The display name is too similar to an existing one.",
+          "invalid": "The display name does not meet the allowed rules."
+        }
+      },
+      "email": {
+        "label": "Email address",
+        "placeholder": "name@example.com"
+      },
+      "password": {
+        "label": "Password",
+        "placeholder": "Create a secure password",
+        "strength": {
+          "empty": "No password",
+          "weak": "Weak",
+          "medium": "Medium",
+          "strong": "Strong"
+        }
+      },
+      "passwordConfirmation": {
+        "label": "Repeat password",
+        "placeholder": "Repeat the password"
+      },
+      "actions": {
+        "submitting": "Creating account…",
+        "submit": "Create account",
+        "signIn": "I already have an account"
+      },
+      "errors": {
+        "requiredFields": "Complete all required fields.",
+        "invalidEmail": "Enter a valid email address.",
+        "invalidUsername": "The display name is invalid.",
+        "usernameUnavailable": "The display name is not available.",
+        "passwordMismatch": "The passwords do not match.",
+        "weakPassword": "The password does not meet the security requirements.",
+        "unknown": "Unable to create the account. Please try again.",
+        "invalidFirstNames": "Enter a valid first name.",
+        "invalidLastNames": "Enter a valid last name.",
+        "invalidPassword": "The password does not meet the security requirements.",
+        "passwordsDoNotMatch": "The passwords do not match.",
+        "invalidField": "Review this field.",
+        "reviewFields": "Review the marked fields before continuing.",
+        "usernameChecking": "Wait for the display name check to finish."
+      },
+      "success": "The account was created. Check your email to verify it."
+    },
+    "emailVerification": {
+      "title": "Verify email",
+      "description": "Enter the 6-character code sent to your email.",
+      "descriptionWithoutEmail": "Enter the 6-character code sent to your email.",
+      "code": {
+        "label": "Verification code",
+        "placeholder": "ABC123",
+        "hint": "The code contains six uppercase letters or numbers.",
+        "expired": "The code has expired. Request a new one.",
+        "expiresIn": "The code expires in {time}."
+      },
+      "actions": {
+        "verifying": "Verifying…",
+        "verify": "Verify email",
+        "resending": "Resending…",
+        "resend": "Resend code",
+        "resendIn": "Resend in {seconds}s",
+        "backToSignIn": "Back to sign in",
+        "signIn": "Back to sign in",
+        "registerAgain": "Back to registration"
+      },
+      "success": "Your email was verified successfully.",
+      "errors": {
+        "requiredCode": "Enter the verification code.",
+        "invalidCode": "The code is invalid or has expired.",
+        "tooManyAttempts": "The attempt limit was reached. Request a new code.",
+        "resendUnavailable": "You cannot request another code yet.",
+        "unknown": "Unable to verify the email. Please try again.",
+        "expired": "The code has expired. Request a new one.",
+        "resendFailed": "The code could not be resent. Please try again."
+      },
+      "securityNotice": "Do not share this code with anyone. Fixora will never ask for it through chat.",
+      "resend": {
+        "availableIn": "You can resend the code in {time}."
+      }
+    },
+    "passwordRecovery": {
+      "title": "Recover password",
+      "description": "Enter the account email and we will send you a recovery code.",
+      "email": {
+        "label": "Email address",
+        "placeholder": "name@example.com"
+      },
+      "actions": {
+        "requesting": "Sending code…",
+        "submit": "Send code",
+        "backToSignIn": "Back to sign in",
+        "adminAccess": "Recover administrator access",
+        "requestCode": "Send code",
+        "verifyCode": "Verify code",
+        "verifying": "Verifying…",
+        "resendCode": "Resend code",
+        "changeEmail": "Use another email",
+        "signIn": "Back to sign in"
+      },
+      "success": "If the email belongs to an account, you will receive a recovery code.",
+      "errors": {
+        "requiredEmail": "Enter your email address.",
+        "invalidEmail": "Enter a valid email address.",
+        "tooManyRequests": "Too many requests were made. Wait before trying again.",
+        "unknown": "Unable to request the code. Please try again.",
+        "codeExpired": "The code has expired. Request a new one.",
+        "invalidCode": "The code is invalid.",
+        "requestFailed": "The code could not be requested. Please try again.",
+        "verificationFailed": "The code could not be verified. Please try again."
+      },
+      "request": {
+        "title": "Recover password",
+        "description": "Enter the account email to receive a recovery code."
+      },
+      "verification": {
+        "title": "Verify recovery code",
+        "description": "Enter the 6-character code sent to your email.",
+        "expired": "The code has expired. Request a new one.",
+        "expiresIn": "The code expires in {time}.",
+        "resendAvailableIn": "You can resend the code in {time}."
+      },
+      "code": {
+        "label": "Recovery code"
+      },
+      "messages": {
+        "codeRequested": "If the email belongs to an account, you will receive a recovery code.",
+        "codeVerified": "The code was verified successfully."
+      },
+      "securityNotice": "Do not share the recovery code or recovery link with anyone."
+    },
+    "passwordReset": {
+      "title": "Create new password",
+      "description": "Confirm the recovery code and set a new password.",
+      "email": {
+        "label": "Email address",
+        "placeholder": "name@example.com"
+      },
+      "code": {
+        "label": "Recovery code",
+        "placeholder": "ABC123"
+      },
+      "password": {
+        "label": "New password",
+        "placeholder": "Create a secure password",
+        "strength": {
+          "empty": "No password",
+          "weak": "Weak",
+          "medium": "Medium",
+          "strong": "Strong"
+        }
+      },
+      "passwordConfirmation": {
+        "label": "Repeat password",
+        "placeholder": "Repeat the new password"
+      },
+      "actions": {
+        "submitting": "Updating password…",
+        "submit": "Update password",
+        "backToSignIn": "Back to sign in",
+        "signIn": "Back to sign in",
+        "requestAnotherCode": "Request another code"
+      },
+      "success": "The password was updated successfully.",
+      "errors": {
+        "requiredFields": "Complete the code and password fields.",
+        "invalidCode": "The code is invalid or has expired.",
+        "passwordMismatch": "The passwords do not match.",
+        "weakPassword": "The password does not meet the security requirements.",
+        "unknown": "Unable to update the password. Please try again.",
+        "invalidPassword": "The password does not meet the security requirements.",
+        "passwordsDoNotMatch": "The passwords do not match.",
+        "invalidField": "Review this field.",
+        "reviewFields": "Review the marked fields before continuing."
+      }
+    },
+    "adminSignIn": {
+      "title": "Administrator access",
+      "description": "Sign in with the administrator account provided by Fixora.",
+      "notice": "Administrator accounts are not publicly registered; they are created by the company with a real email address.",
+      "email": {
+        "label": "Administrator email",
+        "placeholder": "administrator@example.com"
+      },
+      "password": {
+        "label": "Password",
+        "placeholder": "Enter your password"
+      },
+      "actions": {
+        "submitting": "Signing in…",
+        "submit": "Sign in as administrator",
+        "forgotPassword": "Recover password",
+        "userAccess": "Back to user access"
+      },
+      "errors": {
+        "requiredFields": "Enter your email address and password.",
+        "invalidCredentials": "The administrator credentials are incorrect.",
+        "accountNotActive": "The administrator account is not active yet.",
+        "tooManyAttempts": "Too many attempts were made. Wait a few minutes and try again.",
+        "unknown": "Unable to start the administrator session.",
+        "invalidEmail": "Enter a valid administrator email.",
+        "passwordRequired": "Enter the administrator password."
+      },
+      "securityNotice": "Administrator access is restricted to accounts created and activated by Fixora.",
+      "success": "The administrator session started successfully."
+    },
+    "passwordStrengthIndicator": {
+      "label": "Password strength",
+      "empty": "No password",
+      "weak": "Weak",
+      "medium": "Medium",
+      "strong": "Strong",
+      "requirements": "Include uppercase letters, lowercase letters, numbers, and symbols."
+    },
+    "usernameField": {
+      "checking": "Checking…",
+      "available": "Available",
+      "unavailable": "Unavailable",
+      "invalid": "Invalid name",
+      "suggestions": "Suggestions"
+    },
+    "verificationCodeField": {
+      "label": "6-character code",
+      "placeholder": "ABC123",
+      "invalid": "Enter exactly six uppercase letters or numbers."
+    },
+    "authenticatedAccount": {
+      "menuLabel": "Open account menu",
+      "signedInAs": "Signed in as {username}",
+      "profile": "Profile",
+      "notifications": "Notifications",
+      "cart": "Cart",
+      "signOut": "Sign out",
+      "unreadNotifications": "{count, plural, =0 {No new notifications} one {# new notification} other {# new notifications}}",
+      "avatarAlternativeText": "Avatar for {name}",
+      "menu": {
+        "label": "Account menu",
+        "profile": "Profile",
+        "notifications": "Notifications",
+        "cart": "Cart",
+        "signOut": "Sign out"
+      },
+      "actions": {
+        "openMenu": "Open account menu",
+        "closeMenu": "Close account menu",
+        "closePanel": "Close panel",
+        "signingOut": "Signing out…"
+      },
+      "panels": {
+        "profile": {
+          "title": "Profile",
+          "empty": "The profile does not have any content yet."
+        },
+        "notifications": {
+          "title": "Notifications",
+          "loading": "Loading notifications…"
+        },
+        "cart": {
+          "title": "Cart",
+          "empty": "The cart is empty."
+        }
+      },
+      "errors": {
+        "signOutFailed": "The session could not be closed."
+      }
+    },
+    "notifications": {
+      "title": "Notifications",
+      "unreadCount": "{count, plural, =0 {You have no unread notifications} one {You have # unread notification} other {You have # unread notifications}}",
+      "actions": {
+        "close": "Close",
+        "retry": "Try again",
+        "refresh": "Refresh",
+        "refreshing": "Refreshing…",
+        "markAsRead": "Mark as read",
+        "markingAsRead": "Marking…"
+      },
+      "messages": {
+        "signInRequired": "Sign in to view your notifications.",
+        "loading": "Loading notifications…",
+        "empty": "You have no notifications.",
+        "read": "Read",
+        "unread": "Unread",
+        "readAt": "Read at {time}."
+      },
+      "errors": {
+        "markAsReadFailed": "The notification could not be marked as read."
+      }
+    }
+  },
+  "notifications": {
+    "title": "Notifications",
+    "description": "Review updates related to your account.",
+    "close": "Close",
+    "loading": "Loading notifications…",
+    "empty": "You have no notifications.",
+    "loadError": "Notifications could not be loaded.",
+    "markRead": "Mark as read",
+    "markingRead": "Marking…",
+    "markAllRead": "Mark all as read",
+    "read": "Read",
+    "unread": "Unread",
+    "new": "New",
+    "retry": "Try again",
+    "accountVerified": "Your account was verified.",
+    "administratorActivated": "Your administrator account was activated.",
+    "passwordChanged": "Your account password was updated."
   }
 }

@@ -1,28 +1,58 @@
 "use client";
 
-import { LogIn } from "lucide-react";
+import {
+  LogIn,
+} from "lucide-react";
 
-import { LOGIN_ROUTE } from "@/config/navigation.config";
-import { Link } from "@/i18n/navigation";
-import { cn } from "@/utils/cn";
+import {
+  useAuth,
+} from "@/providers/auth-provider";
 
-import type { LoginLinkProps } from "./LoginLink.types";
+import {
+  cn,
+} from "@/utils/cn";
+
+import type {
+  LoginLinkProps,
+} from "./LoginLink.types";
 
 export function LoginLink({
   label,
   variant = "desktop",
   onNavigate,
   className,
-  ...linkProps
+  disabled,
+  ...buttonProperties
 }: LoginLinkProps) {
-  const isDesktop = variant === "desktop";
+  const {
+    openAuthentication,
+  } = useAuth();
+
+  const isDesktop =
+    variant === "desktop";
+
+  const handleAuthenticationRequest =
+    (): void => {
+      if (
+        disabled
+      ) {
+        return;
+      }
+
+      openAuthentication({});
+
+      onNavigate?.();
+    };
 
   return (
-    <Link
-      {...linkProps}
-      href={LOGIN_ROUTE.href}
+    <button
+      {...buttonProperties}
+      type="button"
+      disabled={disabled}
       aria-label={label}
-      onClick={onNavigate}
+      onClick={
+        handleAuthenticationRequest
+      }
       className={cn(
         "group inline-flex shrink-0 items-center justify-center",
         "rounded-full border font-semibold",
@@ -38,6 +68,10 @@ export function LoginLink({
 
         "hover:scale-[1.03]",
         "active:scale-[0.97]",
+
+        "disabled:pointer-events-none",
+        "disabled:cursor-not-allowed",
+        "disabled:opacity-60",
 
         "dark:focus-visible:ring-[#57af33]",
         "dark:focus-visible:ring-offset-[#0c0f0c]",
@@ -100,7 +134,11 @@ export function LoginLink({
     >
       <LogIn
         aria-hidden="true"
-        size={isDesktop ? 19 : 17}
+        size={
+          isDesktop
+            ? 19
+            : 17
+        }
         strokeWidth={1.9}
         className={cn(
           "shrink-0",
@@ -115,6 +153,6 @@ export function LoginLink({
       <span className="min-w-0 whitespace-nowrap">
         {label}
       </span>
-    </Link>
+    </button>
   );
 }

@@ -17,7 +17,8 @@
     "contact": "Contacto",
     "signIn": "Iniciar sesión",
     "openMenu": "Abrir menú de navegación",
-    "closeMenu": "Cerrar menú de navegación"
+    "closeMenu": "Cerrar menú de navegación",
+    "authenticatedAs": "Sesión iniciada como {name}"
   },
   "quickActions": {
     "label": "Acciones rápidas",
@@ -31,7 +32,11 @@
     "information": "Información",
     "previous": "Mostrar acciones anteriores",
     "next": "Mostrar acciones siguientes",
-    "comingSoon": "Próximamente"
+    "comingSoon": "Próximamente",
+    "profile": "Perfil",
+    "notifications": "Notificaciones",
+    "cart": "Carrito de compras",
+    "logout": "Cerrar sesión"
   },
   "theme": {
     "light": "Modo claro",
@@ -52,6 +57,456 @@
     "close": "Cerrar",
     "back": "Volver",
     "previous": "Anterior",
-    "next": "Siguiente"
+    "next": "Siguiente",
+    "continue": "Continuar",
+    "cancel": "Cancelar",
+    "save": "Guardar",
+    "loading": "Cargando…",
+    "retry": "Reintentar",
+    "copy": "Copiar",
+    "copied": "Copiado"
+  },
+  "auth": {
+    "views": {
+      "login": {
+        "title": "Iniciar sesión"
+      },
+      "register": {
+        "title": "Crear cuenta"
+      },
+      "verify-email": {
+        "title": "Verificar correo"
+      },
+      "forgot-password": {
+        "title": "Recuperar contraseña"
+      },
+      "reset-password": {
+        "title": "Crear nueva contraseña"
+      }
+    },
+    "administratorViews": {
+      "login": {
+        "title": "Acceso del administrador"
+      },
+      "forgot-password": {
+        "title": "Recuperar contraseña administrativa"
+      },
+      "reset-password": {
+        "title": "Nueva contraseña administrativa"
+      }
+    },
+    "close": "Cerrar",
+    "email": "Correo electrónico",
+    "password": "Contraseña",
+    "newPassword": "Nueva contraseña",
+    "repeatPassword": "Repetir contraseña",
+    "firstName": "Nombres",
+    "lastName": "Apellidos",
+    "displayName": "Nombre de pila",
+    "signIn": "Iniciar sesión",
+    "administratorSignIn": "Iniciar como administrador",
+    "createAccount": "Crear una cuenta",
+    "register": "Registrarse",
+    "forgotPassword": "Olvidé mi contraseña",
+    "administratorAccess": "Acceder como administrador",
+    "backToUserAccess": "Volver al acceso de usuario",
+    "backToLogin": "Volver al inicio de sesión",
+    "checkAlias": "Comprobar nombre de pila",
+    "aliasAvailable": "El nombre de pila está disponible.",
+    "aliasSuggestions": "Nombres de pila disponibles sugeridos",
+    "aliasReason": {
+      "available": "El nombre de pila está disponible.",
+      "taken": "El nombre de pila ya está registrado.",
+      "too-similar": "El nombre de pila se parece demasiado a uno existente.",
+      "invalid": "El nombre de pila no cumple las reglas permitidas."
+    },
+    "passwordStrength": "Fortaleza",
+    "strength": {
+      "empty": "Sin contraseña",
+      "weak": "Débil",
+      "medium": "Media",
+      "strong": "Fuerte"
+    },
+    "passwordRequirements": "Usa entre 8 y 128 caracteres e incluye mayúsculas, minúsculas, números y signos, sin espacios.",
+    "verificationExplanation": "Escribe el código de 6 caracteres enviado a tu correo. No compartas este código con nadie.",
+    "verificationCode": "Código de verificación",
+    "verify": "Verificar correo",
+    "resendCode": "Reenviar código",
+    "recoveryExplanation": "Escribe el correo de la cuenta. Si corresponde, recibirás un código para crear una nueva contraseña.",
+    "sendRecoveryCode": "Enviar código de recuperación",
+    "resetPassword": "Actualizar contraseña",
+    "processing": "Procesando…",
+    "genericError": "No se pudo completar la operación.",
+    "administratorNotice": "El acceso administrativo solo está disponible para cuentas creadas por la empresa.",
+    "aliasSelected": "Nombre de pila seleccionado: {alias}.",
+    "gateway": {
+      "dialogLabel": "Acceso a Fixora",
+      "close": "Cerrar acceso",
+      "back": "Volver",
+      "userAccess": "Acceso de usuario",
+      "administratorAccess": "Acceso administrativo"
+    },
+    "authenticationGateway": {
+      "dialogLabel": "Acceso a Fixora",
+      "close": "Cerrar acceso",
+      "back": "Volver"
+    },
+    "userSignIn": {
+      "title": "Iniciar sesión",
+      "description": "Ingresa con el correo y la contraseña de tu cuenta verificada.",
+      "email": {
+        "label": "Correo electrónico",
+        "placeholder": "nombre@correo.com"
+      },
+      "password": {
+        "label": "Contraseña",
+        "placeholder": "Ingresa tu contraseña"
+      },
+      "actions": {
+        "submitting": "Iniciando sesión…",
+        "submit": "Iniciar sesión",
+        "forgotPassword": "Olvidé mi contraseña",
+        "register": "Crear una cuenta",
+        "adminAccess": "Acceso administrativo"
+      },
+      "errors": {
+        "requiredFields": "Completa el correo y la contraseña.",
+        "invalidCredentials": "El correo o la contraseña no son correctos.",
+        "emailNotVerified": "Debes verificar tu correo antes de iniciar sesión.",
+        "tooManyAttempts": "Se realizaron demasiados intentos. Espera unos minutos e inténtalo otra vez.",
+        "unknown": "No se pudo iniciar sesión. Inténtalo nuevamente."
+      }
+    },
+    "userRegistration": {
+      "title": "Crear una cuenta",
+      "description": "Completa tus datos y verifica tu correo para activar la cuenta.",
+      "firstNames": {
+        "label": "Nombres",
+        "placeholder": "Ingresa tus nombres"
+      },
+      "lastNames": {
+        "label": "Apellidos",
+        "placeholder": "Ingresa tus apellidos"
+      },
+      "username": {
+        "label": "Nombre de pila",
+        "placeholder": "Elige un nombre público",
+        "hint": "Será visible públicamente y debe ser único.",
+        "checking": "Comprobando disponibilidad…",
+        "available": "El nombre está disponible.",
+        "unavailable": "El nombre no está disponible.",
+        "invalid": "Usa únicamente letras, números, puntos, guiones o guiones bajos.",
+        "suggestions": "Sugerencias disponibles",
+        "status": {
+          "checking": "Comprobando disponibilidad…",
+          "available": "El nombre de pila está disponible.",
+          "taken": "El nombre de pila ya está registrado.",
+          "tooSimilar": "El nombre de pila se parece demasiado a uno existente.",
+          "invalid": "El nombre de pila no cumple las reglas permitidas."
+        }
+      },
+      "email": {
+        "label": "Correo electrónico",
+        "placeholder": "nombre@correo.com"
+      },
+      "password": {
+        "label": "Contraseña",
+        "placeholder": "Crea una contraseña segura",
+        "strength": {
+          "empty": "Sin contraseña",
+          "weak": "Débil",
+          "medium": "Media",
+          "strong": "Fuerte"
+        }
+      },
+      "passwordConfirmation": {
+        "label": "Repetir contraseña",
+        "placeholder": "Repite la contraseña"
+      },
+      "actions": {
+        "submitting": "Creando cuenta…",
+        "submit": "Crear cuenta",
+        "signIn": "Ya tengo una cuenta"
+      },
+      "errors": {
+        "requiredFields": "Completa todos los campos obligatorios.",
+        "invalidEmail": "Ingresa un correo electrónico válido.",
+        "invalidUsername": "El nombre de pila no es válido.",
+        "usernameUnavailable": "El nombre de pila no está disponible.",
+        "passwordMismatch": "Las contraseñas no coinciden.",
+        "weakPassword": "La contraseña no cumple los requisitos de seguridad.",
+        "unknown": "No se pudo crear la cuenta. Inténtalo nuevamente.",
+        "invalidFirstNames": "Ingresa nombres válidos.",
+        "invalidLastNames": "Ingresa apellidos válidos.",
+        "invalidPassword": "La contraseña no cumple los requisitos de seguridad.",
+        "passwordsDoNotMatch": "Las contraseñas no coinciden.",
+        "invalidField": "Revisa este campo.",
+        "reviewFields": "Revisa los campos marcados antes de continuar.",
+        "usernameChecking": "Espera a que termine la comprobación del nombre de pila."
+      },
+      "success": "La cuenta fue creada. Revisa tu correo para verificarla."
+    },
+    "emailVerification": {
+      "title": "Verificar correo",
+      "description": "Escribe el código de 6 caracteres enviado a tu correo.",
+      "descriptionWithoutEmail": "Escribe el código de 6 caracteres enviado a tu correo.",
+      "code": {
+        "label": "Código de verificación",
+        "placeholder": "ABC123",
+        "hint": "El código contiene seis letras mayúsculas o números.",
+        "expired": "El código expiró. Solicita uno nuevo.",
+        "expiresIn": "El código expira en {time}."
+      },
+      "actions": {
+        "verifying": "Verificando…",
+        "verify": "Verificar correo",
+        "resending": "Reenviando…",
+        "resend": "Reenviar código",
+        "resendIn": "Reenviar en {seconds} s",
+        "backToSignIn": "Volver al inicio de sesión",
+        "signIn": "Volver al inicio de sesión",
+        "registerAgain": "Volver al registro"
+      },
+      "success": "Tu correo fue verificado correctamente.",
+      "errors": {
+        "requiredCode": "Ingresa el código de verificación.",
+        "invalidCode": "El código no es válido o ya expiró.",
+        "tooManyAttempts": "Se alcanzó el límite de intentos. Solicita un código nuevo.",
+        "resendUnavailable": "Todavía no puedes solicitar otro código.",
+        "unknown": "No se pudo verificar el correo. Inténtalo nuevamente.",
+        "expired": "El código expiró. Solicita uno nuevo.",
+        "resendFailed": "No se pudo reenviar el código. Inténtalo nuevamente."
+      },
+      "securityNotice": "No compartas este código con nadie. Fixora nunca te lo solicitará por chat.",
+      "resend": {
+        "availableIn": "Podrás reenviar el código en {time}."
+      }
+    },
+    "passwordRecovery": {
+      "title": "Recuperar contraseña",
+      "description": "Ingresa el correo de la cuenta y te enviaremos un código de recuperación.",
+      "email": {
+        "label": "Correo electrónico",
+        "placeholder": "nombre@correo.com"
+      },
+      "actions": {
+        "requesting": "Enviando código…",
+        "submit": "Enviar código",
+        "backToSignIn": "Volver al inicio de sesión",
+        "adminAccess": "Recuperar acceso administrativo",
+        "requestCode": "Enviar código",
+        "verifyCode": "Verificar código",
+        "verifying": "Verificando…",
+        "resendCode": "Reenviar código",
+        "changeEmail": "Usar otro correo",
+        "signIn": "Volver al inicio de sesión"
+      },
+      "success": "Si el correo corresponde a una cuenta, recibirás un código de recuperación.",
+      "errors": {
+        "requiredEmail": "Ingresa tu correo electrónico.",
+        "invalidEmail": "Ingresa un correo electrónico válido.",
+        "tooManyRequests": "Se realizaron demasiadas solicitudes. Espera antes de intentarlo otra vez.",
+        "unknown": "No se pudo solicitar el código. Inténtalo nuevamente.",
+        "codeExpired": "El código expiró. Solicita uno nuevo.",
+        "invalidCode": "El código no es válido.",
+        "requestFailed": "No se pudo solicitar el código. Inténtalo nuevamente.",
+        "verificationFailed": "No se pudo verificar el código. Inténtalo nuevamente."
+      },
+      "request": {
+        "title": "Recuperar contraseña",
+        "description": "Ingresa el correo de la cuenta para recibir un código de recuperación."
+      },
+      "verification": {
+        "title": "Verificar código de recuperación",
+        "description": "Escribe el código de 6 caracteres enviado a tu correo.",
+        "expired": "El código expiró. Solicita uno nuevo.",
+        "expiresIn": "El código expira en {time}.",
+        "resendAvailableIn": "Podrás reenviar el código en {time}."
+      },
+      "code": {
+        "label": "Código de recuperación"
+      },
+      "messages": {
+        "codeRequested": "Si el correo corresponde a una cuenta, recibirás un código de recuperación.",
+        "codeVerified": "Código verificado correctamente."
+      },
+      "securityNotice": "No compartas el código ni el enlace de recuperación con nadie."
+    },
+    "passwordReset": {
+      "title": "Crear nueva contraseña",
+      "description": "Confirma el código de recuperación y establece una contraseña nueva.",
+      "email": {
+        "label": "Correo electrónico",
+        "placeholder": "nombre@correo.com"
+      },
+      "code": {
+        "label": "Código de recuperación",
+        "placeholder": "ABC123"
+      },
+      "password": {
+        "label": "Nueva contraseña",
+        "placeholder": "Crea una contraseña segura",
+        "strength": {
+          "empty": "Sin contraseña",
+          "weak": "Débil",
+          "medium": "Media",
+          "strong": "Fuerte"
+        }
+      },
+      "passwordConfirmation": {
+        "label": "Repetir contraseña",
+        "placeholder": "Repite la nueva contraseña"
+      },
+      "actions": {
+        "submitting": "Actualizando contraseña…",
+        "submit": "Actualizar contraseña",
+        "backToSignIn": "Volver al inicio de sesión",
+        "signIn": "Volver al inicio de sesión",
+        "requestAnotherCode": "Solicitar otro código"
+      },
+      "success": "La contraseña fue actualizada correctamente.",
+      "errors": {
+        "requiredFields": "Completa el código y las contraseñas.",
+        "invalidCode": "El código no es válido o ya expiró.",
+        "passwordMismatch": "Las contraseñas no coinciden.",
+        "weakPassword": "La contraseña no cumple los requisitos de seguridad.",
+        "unknown": "No se pudo actualizar la contraseña. Inténtalo nuevamente.",
+        "invalidPassword": "La contraseña no cumple los requisitos de seguridad.",
+        "passwordsDoNotMatch": "Las contraseñas no coinciden.",
+        "invalidField": "Revisa este campo.",
+        "reviewFields": "Revisa los campos marcados antes de continuar."
+      }
+    },
+    "adminSignIn": {
+      "title": "Acceso del administrador",
+      "description": "Ingresa con la cuenta administrativa proporcionada por Fixora.",
+      "notice": "Las cuentas administrativas no se registran públicamente; son creadas por la empresa con un correo real.",
+      "email": {
+        "label": "Correo administrativo",
+        "placeholder": "administrador@correo.com"
+      },
+      "password": {
+        "label": "Contraseña",
+        "placeholder": "Ingresa tu contraseña"
+      },
+      "actions": {
+        "submitting": "Iniciando sesión…",
+        "submit": "Iniciar como administrador",
+        "forgotPassword": "Recuperar contraseña",
+        "userAccess": "Volver al acceso de usuario"
+      },
+      "errors": {
+        "requiredFields": "Completa el correo y la contraseña.",
+        "invalidCredentials": "Las credenciales administrativas no son correctas.",
+        "accountNotActive": "La cuenta administrativa todavía no está activa.",
+        "tooManyAttempts": "Se realizaron demasiados intentos. Espera unos minutos e inténtalo otra vez.",
+        "unknown": "No se pudo iniciar la sesión administrativa.",
+        "invalidEmail": "Ingresa un correo administrativo válido.",
+        "passwordRequired": "Ingresa la contraseña administrativa."
+      },
+      "securityNotice": "El acceso administrativo es exclusivo para cuentas creadas y activadas por Fixora.",
+      "success": "Sesión administrativa iniciada correctamente."
+    },
+    "passwordStrengthIndicator": {
+      "label": "Fortaleza de la contraseña",
+      "empty": "Sin contraseña",
+      "weak": "Débil",
+      "medium": "Media",
+      "strong": "Fuerte",
+      "requirements": "Incluye mayúsculas, minúsculas, números y símbolos."
+    },
+    "usernameField": {
+      "checking": "Comprobando…",
+      "available": "Disponible",
+      "unavailable": "No disponible",
+      "invalid": "Nombre no válido",
+      "suggestions": "Sugerencias"
+    },
+    "verificationCodeField": {
+      "label": "Código de 6 caracteres",
+      "placeholder": "ABC123",
+      "invalid": "Ingresa exactamente seis letras mayúsculas o números."
+    },
+    "authenticatedAccount": {
+      "menuLabel": "Abrir menú de la cuenta",
+      "signedInAs": "Sesión iniciada como {username}",
+      "profile": "Perfil",
+      "notifications": "Notificaciones",
+      "cart": "Carrito",
+      "signOut": "Cerrar sesión",
+      "unreadNotifications": "{count, plural, =0 {Sin notificaciones nuevas} one {# notificación nueva} other {# notificaciones nuevas}}",
+      "avatarAlternativeText": "Avatar de {name}",
+      "menu": {
+        "label": "Menú de la cuenta",
+        "profile": "Perfil",
+        "notifications": "Notificaciones",
+        "cart": "Carrito",
+        "signOut": "Cerrar sesión"
+      },
+      "actions": {
+        "openMenu": "Abrir menú de la cuenta",
+        "closeMenu": "Cerrar menú de la cuenta",
+        "closePanel": "Cerrar panel",
+        "signingOut": "Cerrando sesión…"
+      },
+      "panels": {
+        "profile": {
+          "title": "Perfil",
+          "empty": "El perfil todavía no tiene contenido."
+        },
+        "notifications": {
+          "title": "Notificaciones",
+          "loading": "Cargando notificaciones…"
+        },
+        "cart": {
+          "title": "Carrito",
+          "empty": "El carrito está vacío."
+        }
+      },
+      "errors": {
+        "signOutFailed": "No se pudo cerrar la sesión."
+      }
+    },
+    "notifications": {
+      "title": "Notificaciones",
+      "unreadCount": "{count, plural, =0 {No tienes notificaciones sin leer} one {Tienes # notificación sin leer} other {Tienes # notificaciones sin leer}}",
+      "actions": {
+        "close": "Cerrar",
+        "retry": "Reintentar",
+        "refresh": "Actualizar",
+        "refreshing": "Actualizando…",
+        "markAsRead": "Marcar como leída",
+        "markingAsRead": "Marcando…"
+      },
+      "messages": {
+        "signInRequired": "Inicia sesión para ver tus notificaciones.",
+        "loading": "Cargando notificaciones…",
+        "empty": "No tienes notificaciones.",
+        "read": "Leída",
+        "unread": "No leída",
+        "readAt": "Leída a las {time}."
+      },
+      "errors": {
+        "markAsReadFailed": "No se pudo marcar la notificación como leída."
+      }
+    }
+  },
+  "notifications": {
+    "title": "Notificaciones",
+    "description": "Revisa las novedades relacionadas con tu cuenta.",
+    "close": "Cerrar",
+    "loading": "Cargando notificaciones…",
+    "empty": "No tienes notificaciones.",
+    "loadError": "No se pudieron cargar las notificaciones.",
+    "markRead": "Marcar como leída",
+    "markingRead": "Marcando…",
+    "markAllRead": "Marcar todas como leídas",
+    "read": "Leída",
+    "unread": "No leída",
+    "new": "Nueva",
+    "retry": "Reintentar",
+    "accountVerified": "Tu cuenta fue verificada.",
+    "administratorActivated": "Tu cuenta administrativa fue activada.",
+    "passwordChanged": "La contraseña de tu cuenta fue actualizada."
   }
 }

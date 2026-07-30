@@ -9,7 +9,7 @@ export const ASSISTANT_KNOWLEDGE_EN = [
     summary:
       "Fixora is a platform focused on technology solutions, digital resources and technical assistance.",
     content:
-      "Fixora brings together graphic resources, software and licenses, hardware products, technical services, remote support, plans, promotions and help content. Its purpose is to make technology solutions easier to find from a single platform.",
+      "Fixora brings together graphic resources, software and licenses, hardware products, technical services, remote support, plans, promotions, help content and account guidance. Its purpose is to make technology solutions easier to find from a single platform.",
     keywords: [
       "fixora",
       "what is fixora",
@@ -20,6 +20,8 @@ export const ASSISTANT_KNOWLEDGE_EN = [
       "products",
       "digital resources",
       "technical assistance",
+      "fixora account",
+      "authentication",
     ],
     href: "/",
     priority: 10,
@@ -149,7 +151,7 @@ export const ASSISTANT_KNOWLEDGE_EN = [
     summary:
       "Remote technical assistance for reviewing and resolving software-related problems.",
     content:
-      "Remote support allows users to receive technical assistance from a distance when a problem can be reviewed through an authorized connection. It can be useful for configurations, software installation, software errors and technical guidance. Users must authorize the connection and should never share personal passwords or banking information.",
+      "Remote support allows users to receive technical assistance from a distance when a problem can be reviewed through an authorized connection. It can be useful for configurations, software installation, software errors and technical guidance. Users must authorize the connection and should never share personal passwords, verification codes, session tokens or banking information.",
     keywords: [
       "remote support",
       "remote help",
@@ -160,6 +162,7 @@ export const ASSISTANT_KNOWLEDGE_EN = [
       "configuration",
       "distance support",
       "technical guidance",
+      "remote support security",
     ],
     href: "/remote-support",
     priority: 10,
@@ -188,14 +191,45 @@ export const ASSISTANT_KNOWLEDGE_EN = [
     priority: 8,
   },
   {
+    id: "en-accounts-authentication",
+    locale: "en",
+    section: "help-center",
+    title: "Accounts, access and security",
+    summary:
+      "Guidance for registration, sign-in, email verification, password recovery and administrator access.",
+    content:
+      "The Fixora assistant can explain how to create a user account, check a public username, sign in, verify an email address and recover a password. Public registration is only for users; administrator accounts are created by the company and require a real email address. The assistant does not register accounts, reserve usernames, sign users in or change passwords. Never send real passwords, six-character codes, private links or session tokens through the chat.",
+    keywords: [
+      "create account",
+      "register",
+      "user registration",
+      "sign in",
+      "log in",
+      "access my account",
+      "username",
+      "public username",
+      "username availability",
+      "verify email",
+      "verification code",
+      "resend code",
+      "forgot password",
+      "recover password",
+      "reset password",
+      "administrator access",
+      "admin account",
+      "secure password",
+    ],
+    priority: 12,
+  },
+  {
     id: "en-help-center",
     locale: "en",
     section: "help-center",
     title: "Help Center",
     summary:
-      "A section for answering common questions about Fixora's products, services and platform.",
+      "A section for answering common questions about Fixora's products, services, accounts and platform.",
     content:
-      "The Help Center is intended to answer frequently asked questions, explain processes and guide users through products, services, purchases, support and platform features. When a response requires reviewing a specific case, the user should contact Fixora through the Contact section.",
+      "The Help Center is intended to answer frequently asked questions, explain processes and guide users through products, services, purchases, support, accounts and platform features. When a response requires reviewing a specific case, the user should contact Fixora through the Contact section.",
     keywords: [
       "help center",
       "help",
@@ -205,6 +239,8 @@ export const ASSISTANT_KNOWLEDGE_EN = [
       "how it works",
       "guidance",
       "information",
+      "account help",
+      "sign-in problem",
     ],
     href: "/help-center",
     priority: 9,
@@ -217,7 +253,7 @@ export const ASSISTANT_KNOWLEDGE_EN = [
     summary:
       "A channel for specific questions and personalized assistance.",
     content:
-      "The Contact section allows users to send questions related to products, resources, licenses, technical services and remote support. Official contact details and available communication channels will be displayed in that section. The assistant must not invent phone numbers, email addresses, business hours or locations that have not been published.",
+      "The Contact section allows users to send questions related to products, resources, licenses, technical services, remote support and account problems that require human review. Official contact details and available communication channels will be displayed in that section. The assistant must not invent phone numbers, email addresses, business hours or locations that have not been published.",
     keywords: [
       "contact",
       "contact fixora",
@@ -229,6 +265,8 @@ export const ASSISTANT_KNOWLEDGE_EN = [
       "address",
       "location",
       "personalized assistance",
+      "human support",
+      "account problem",
     ],
     href: "/contact",
     priority: 10,

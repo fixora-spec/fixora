@@ -13,26 +13,47 @@ import {
 } from "@/config/assistant.config";
 
 import {
+  useAuth,
+} from "@/providers/auth-provider";
+
+import {
   AssistantServiceError,
   requestAssistantResponse,
 } from "@/services/assistant";
 
 import type {
+  AssistantAuthAction,
   AssistantMessage,
   AssistantMessageStatus,
   AssistantRole,
   AssistantSource,
+  AssistantToolPayload,
   AssistantTranslations,
   SendAssistantMessageOptions,
   UseAssistantReturn,
 } from "@/types/assistant";
 
+const ASSISTANT_AUTH_ACTIONS:
+  readonly AssistantAuthAction[] = [
+    "NONE",
+    "ASK_PASSWORD_LENGTH",
+    "SHOW_GENERATED_PASSWORDS",
+    "OPEN_USER_SIGN_IN",
+    "OPEN_USER_REGISTRATION",
+    "OPEN_EMAIL_VERIFICATION",
+    "OPEN_PASSWORD_RECOVERY",
+    "OPEN_PASSWORD_RESET",
+    "OPEN_ADMIN_SIGN_IN",
+    "CHECK_USERNAME_AVAILABILITY",
+    "REQUEST_USERNAME_FOR_SUGGESTIONS",
+  ];
+
 function createAssistantMessageId(
   prefix: AssistantRole,
 ): string {
   if (
-    typeof crypto !== "undefined" &&
-    typeof crypto.randomUUID === "function"
+    typeof crypto !== "undefined"
+    && typeof crypto.randomUUID === "function"
   ) {
     return `${prefix}-${crypto.randomUUID()}`;
   }
@@ -40,7 +61,9 @@ function createAssistantMessageId(
   return [
     prefix,
     Date.now().toString(36),
-    Math.random().toString(36).slice(2, 10),
+    Math.random()
+      .toString(36)
+      .slice(2, 10),
   ].join("-");
 }
 
@@ -48,9 +71,9 @@ function isRecord(
   value: unknown,
 ): value is Record<string, unknown> {
   return (
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value)
+    typeof value === "object"
+    && value !== null
+    && !Array.isArray(value)
   );
 }
 
@@ -58,8 +81,8 @@ function isAssistantRole(
   value: unknown,
 ): value is AssistantRole {
   return (
-    value === "user" ||
-    value === "assistant"
+    value === "user"
+    || value === "assistant"
   );
 }
 
@@ -67,9 +90,9 @@ function isAssistantMessageStatus(
   value: unknown,
 ): value is AssistantMessageStatus {
   return (
-    value === "sending" ||
-    value === "completed" ||
-    value === "error"
+    value === "sending"
+    || value === "completed"
+    || value === "error"
   );
 }
 
@@ -81,10 +104,10 @@ function isAssistantTranslations(
   }
 
   return (
-    typeof value.es === "string" &&
-    value.es.trim().length > 0 &&
-    typeof value.en === "string" &&
-    value.en.trim().length > 0
+    typeof value.es === "string"
+    && value.es.trim().length > 0
+    && typeof value.en === "string"
+    && value.en.trim().length > 0
   );
 }
 
@@ -96,14 +119,87 @@ function isAssistantSource(
   }
 
   const hasValidHref =
-    value.href === undefined ||
-    typeof value.href === "string";
+    value.href === undefined
+    || typeof value.href === "string";
 
   return (
-    typeof value.id === "string" &&
-    typeof value.title === "string" &&
-    typeof value.section === "string" &&
-    hasValidHref
+    typeof value.id === "string"
+    && typeof value.title === "string"
+    && typeof value.section === "string"
+    && hasValidHref
+  );
+}
+
+function isAssistantAuthAction(
+  value: unknown,
+): value is AssistantAuthAction {
+  return (
+    typeof value === "string"
+    && ASSISTANT_AUTH_ACTIONS.includes(
+      value as AssistantAuthAction,
+    )
+  );
+}
+
+function isStringArray(
+  value: unknown,
+): value is readonly string[] {
+  return (
+    Array.isArray(value)
+    && value.every(
+      (item) =>
+        typeof item === "string"
+        && item.length > 0,
+    )
+  );
+}
+
+function isAssistantToolPayload(
+  value: unknown,
+): value is AssistantToolPayload {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  const validPasswords =
+    value.passwordSuggestions === undefined
+    || isStringArray(
+      value.passwordSuggestions,
+    );
+
+  const validAliases =
+    value.aliasSuggestions === undefined
+    || isStringArray(
+      value.aliasSuggestions,
+    );
+
+  const validAction =
+    value.authAction === undefined
+    || isAssistantAuthAction(
+      value.authAction,
+    );
+
+  const validRequiresUserInput =
+    value.requiresUserInput === undefined
+    || typeof value.requiresUserInput === "boolean";
+
+  const validPasswordLength =
+    value.passwordLength === undefined
+    || (
+      typeof value.passwordLength === "number"
+      && Number.isInteger(
+        value.passwordLength,
+      )
+      && value.passwordLength >= 8
+      && value.passwordLength <= 30
+    );
+
+  return (
+    validPasswords
+    && validAliases
+    && validAction
+    && validRequiresUserInput
+    && validPasswordLength
   );
 }
 
@@ -115,31 +211,42 @@ function isAssistantMessage(
   }
 
   const hasValidSources =
-    value.sources === undefined ||
-    (
-      Array.isArray(value.sources) &&
-      value.sources.every(
+    value.sources === undefined
+    || (
+      Array.isArray(value.sources)
+      && value.sources.every(
         isAssistantSource,
       )
     );
 
   const hasValidTranslations =
-    value.translations === undefined ||
-    isAssistantTranslations(
+    value.translations === undefined
+    || isAssistantTranslations(
       value.translations,
     );
 
+  const hasValidTools =
+    value.tools === undefined
+    || isAssistantToolPayload(
+      value.tools,
+    );
+
   return (
-    typeof value.id === "string" &&
-    isAssistantRole(value.role) &&
-    typeof value.content === "string" &&
-    typeof value.createdAt === "number" &&
-    Number.isFinite(value.createdAt) &&
-    isAssistantMessageStatus(
+    typeof value.id === "string"
+    && isAssistantRole(
+      value.role,
+    )
+    && typeof value.content === "string"
+    && typeof value.createdAt === "number"
+    && Number.isFinite(
+      value.createdAt,
+    )
+    && isAssistantMessageStatus(
       value.status,
-    ) &&
-    hasValidSources &&
-    hasValidTranslations
+    )
+    && hasValidSources
+    && hasValidTranslations
+    && hasValidTools
   );
 }
 
@@ -151,15 +258,106 @@ function limitStoredMessages(
   );
 }
 
-function readStoredMessages(): AssistantMessage[] {
-  if (typeof window === "undefined") {
+function removeGeneratedPasswordsFromTools(
+  tools: AssistantToolPayload,
+): AssistantToolPayload | undefined {
+  const sanitizedTools:
+    AssistantToolPayload = {
+      ...(tools.aliasSuggestions
+        ? {
+            aliasSuggestions:
+              tools.aliasSuggestions,
+          }
+        : {}),
+
+      ...(tools.authAction
+        ? {
+            authAction:
+              tools.authAction,
+          }
+        : {}),
+
+      ...(typeof tools.requiresUserInput
+        === "boolean"
+        ? {
+            requiresUserInput:
+              tools.requiresUserInput,
+          }
+        : {}),
+
+      ...(typeof tools.passwordLength
+        === "number"
+        ? {
+            passwordLength:
+              tools.passwordLength,
+          }
+        : {}),
+    };
+
+  return Object.keys(
+    sanitizedTools,
+  ).length > 0
+    ? sanitizedTools
+    : undefined;
+}
+
+function sanitizeMessageForStorage(
+  message: AssistantMessage,
+): AssistantMessage {
+  if (
+    message.tools === undefined
+    || message.tools.passwordSuggestions === undefined
+  ) {
+    return message;
+  }
+
+  const sanitizedTools =
+    removeGeneratedPasswordsFromTools(
+      message.tools,
+    );
+
+  const sanitizedMessage:
+    AssistantMessage = {
+      ...message,
+    };
+
+  if (
+    sanitizedTools === undefined
+  ) {
+    delete sanitizedMessage.tools;
+
+    return sanitizedMessage;
+  }
+
+  sanitizedMessage.tools =
+    sanitizedTools;
+
+  return sanitizedMessage;
+}
+
+function createAccountStorageKey(
+  accountId: string,
+): string {
+  return [
+    ASSISTANT_CONFIG.storageKey,
+    "account",
+    accountId,
+  ].join(":");
+}
+
+function readStoredMessages(
+  storageKey: string,
+): AssistantMessage[] {
+  if (
+    typeof window === "undefined"
+  ) {
     return [];
   }
 
   try {
     const storedValue =
       window.localStorage.getItem(
-        ASSISTANT_CONFIG.storageKey,
+        storageKey,
       );
 
     if (!storedValue) {
@@ -167,9 +365,15 @@ function readStoredMessages(): AssistantMessage[] {
     }
 
     const parsedValue: unknown =
-      JSON.parse(storedValue);
+      JSON.parse(
+        storedValue,
+      );
 
-    if (!Array.isArray(parsedValue)) {
+    if (
+      !Array.isArray(
+        parsedValue,
+      )
+    ) {
       return [];
     }
 
@@ -184,27 +388,57 @@ function readStoredMessages(): AssistantMessage[] {
 }
 
 function writeStoredMessages(
+  storageKey: string,
   messages: readonly AssistantMessage[],
 ): void {
-  if (typeof window === "undefined") {
+  if (
+    typeof window === "undefined"
+  ) {
     return;
   }
 
   try {
+    const sanitizedMessages =
+      limitStoredMessages(
+        messages,
+      ).map(
+        sanitizeMessageForStorage,
+      );
+
     window.localStorage.setItem(
-      ASSISTANT_CONFIG.storageKey,
+      storageKey,
       JSON.stringify(
-        limitStoredMessages(messages),
+        sanitizedMessages,
       ),
     );
   } catch {
-    // El asistente continúa funcionando
-    // aunque localStorage no esté disponible.
+    // El asistente continúa aunque localStorage falle.
   }
 }
 
-function removeStoredMessages(): void {
-  if (typeof window === "undefined") {
+function removeStoredMessages(
+  storageKey: string,
+): void {
+  if (
+    typeof window === "undefined"
+  ) {
+    return;
+  }
+
+  try {
+    window.localStorage.removeItem(
+      storageKey,
+    );
+  } catch {
+    // No se requiere otra acción.
+  }
+}
+
+function removeLegacyStoredMessages():
+  void {
+  if (
+    typeof window === "undefined"
+  ) {
     return;
   }
 
@@ -217,293 +451,960 @@ function removeStoredMessages(): void {
   }
 }
 
-export function useAssistant(): UseAssistantReturn {
-  const [isOpen, setIsOpen] =
-    useState(false);
+function normalizeQuestion(
+  value: string,
+): string {
+  return value
+    .normalize("NFD")
+    .replace(
+      /[\u0300-\u036f]/gu,
+      "",
+    )
+    .toLowerCase()
+    .replace(
+      /[^a-z0-9\s]/gu,
+      " ",
+    )
+    .replace(
+      /\s+/gu,
+      " ",
+    )
+    .trim();
+}
 
-  const [isLoading, setIsLoading] =
-    useState(false);
-
-  const [messages, setMessages] =
-    useState<AssistantMessage[]>(
-      readStoredMessages,
+function asksForAccountName(
+  message: string,
+): boolean {
+  const normalizedMessage =
+    normalizeQuestion(
+      message,
     );
 
-  const [error, setError] =
-    useState<string | null>(null);
+  const exactQuestions = [
+    "que nombre tengo",
+    "cual es mi nombre",
+    "como me llamo",
+    "dime mi nombre",
+    "dime mi nombre de pila",
+    "cual es mi nombre de pila",
+    "what is my name",
+    "whats my name",
+    "tell me my name",
+    "what is my username",
+  ];
 
-  const abortControllerRef =
-    useRef<AbortController | null>(null);
+  if (
+    exactQuestions.includes(
+      normalizedMessage,
+    )
+  ) {
+    return true;
+  }
 
-  const isMountedRef = useRef(true);
-  const isSendingRef = useRef(false);
+  return (
+    normalizedMessage.includes(
+      "mi nombre de pila",
+    )
+    || normalizedMessage.includes(
+      "my username",
+    )
+  );
+}
 
-  useEffect(() => {
-    isMountedRef.current = true;
+function createWelcomeMessage(
+  username: string,
+): AssistantMessage {
+  const translations:
+    AssistantTranslations = {
+      es:
+        `Hola, ${username}. Bienvenido a Fixora. ¿En qué puedo ayudarte?`,
 
-    return () => {
-      isMountedRef.current = false;
-      isSendingRef.current = false;
-
-      abortControllerRef.current?.abort();
-      abortControllerRef.current = null;
+      en:
+        `Hello, ${username}. Welcome to Fixora. How can I help you?`,
     };
-  }, []);
 
-  useEffect(() => {
-    writeStoredMessages(messages);
-  }, [messages]);
+  return {
+    id:
+      createAssistantMessageId(
+        "assistant",
+      ),
 
-  const openAssistant =
-    useCallback((): void => {
-      setIsOpen(true);
-    }, []);
+    role:
+      "assistant",
 
-  const closeAssistant =
-    useCallback((): void => {
-      setIsOpen(false);
-    }, []);
+    content:
+      translations.es,
 
-  const toggleAssistant =
-    useCallback((): void => {
-      setIsOpen(
-        (currentValue) =>
-          !currentValue,
-      );
-    }, []);
+    translations,
 
-  const clearError =
-    useCallback((): void => {
-      setError(null);
-    }, []);
+    createdAt:
+      Date.now(),
 
-  const clearMessages =
-    useCallback((): void => {
-      abortControllerRef.current?.abort();
-      abortControllerRef.current = null;
+    status:
+      "completed",
+  };
+}
 
-      isSendingRef.current = false;
+function isWelcomeMessage(
+  message: AssistantMessage,
+): boolean {
+  const possibleContents = [
+    message.content,
+    message.translations?.es,
+    message.translations?.en,
+  ];
 
-      setMessages([]);
-      setError(null);
-      setIsLoading(false);
-
-      removeStoredMessages();
-    }, []);
-
-  const sendMessage = useCallback(
-    async ({
-      message,
-      locale,
-    }: SendAssistantMessageOptions): Promise<void> => {
-      const normalizedMessage =
-        message.trim();
-
+  return possibleContents.some(
+    (
+      value,
+    ): boolean => {
       if (
-        !normalizedMessage ||
-        isSendingRef.current
+        typeof value !== "string"
       ) {
-        return;
+        return false;
       }
 
-      const currentCopy =
-        getAssistantCopy(locale);
-
-      if (
-        normalizedMessage.length >
-        ASSISTANT_CONFIG.maxMessageLength
-      ) {
-        setError(
-          currentCopy.messageTooLong,
+      const normalizedValue =
+        normalizeQuestion(
+          value,
         );
 
+      return (
+        normalizedValue.includes(
+          "bienvenido a fixora",
+        )
+        || normalizedValue.includes(
+          "welcome to fixora",
+        )
+      );
+    },
+  );
+}
+
+function createAuthenticatedConversation(
+  storedMessages:
+    readonly AssistantMessage[],
+  username:
+    string,
+): AssistantMessage[] {
+  const welcomeMessage =
+    createWelcomeMessage(
+      username,
+    );
+
+  if (
+    storedMessages.length === 0
+  ) {
+    return [
+      welcomeMessage,
+    ];
+  }
+
+  const firstMessage =
+    storedMessages[0];
+
+  if (
+    firstMessage
+    && isWelcomeMessage(
+      firstMessage,
+    )
+  ) {
+    return [
+      welcomeMessage,
+      ...storedMessages.slice(
+        1,
+      ),
+    ];
+  }
+
+  return [
+    welcomeMessage,
+    ...storedMessages,
+  ];
+}
+
+function createAccountNameMessage(
+  username: string,
+): AssistantMessage {
+  const translations:
+    AssistantTranslations = {
+      es:
+        `Tu nombre de pila en Fixora es ${username}.`,
+
+      en:
+        `Your Fixora username is ${username}.`,
+    };
+
+  return {
+    id:
+      createAssistantMessageId(
+        "assistant",
+      ),
+
+    role:
+      "assistant",
+
+    content:
+      translations.es,
+
+    translations,
+
+    createdAt:
+      Date.now(),
+
+    status:
+      "completed",
+  };
+}
+
+export function useAssistant():
+  UseAssistantReturn {
+  const {
+    status:
+      authenticationStatus,
+
+    authenticated,
+    account,
+  } = useAuth();
+
+  const accountId =
+    authenticated
+      ? account?.accountId
+        ?? null
+      : null;
+
+  const username =
+    authenticated
+      ? account?.username
+        ?.trim()
+        ?? null
+      : null;
+
+  const [
+    isOpen,
+    setIsOpen,
+  ] = useState(
+    false,
+  );
+
+  const [
+    isLoading,
+    setIsLoading,
+  ] = useState(
+    false,
+  );
+
+  const [
+    messages,
+    setMessages,
+  ] = useState<
+    AssistantMessage[]
+  >(
+    [],
+  );
+
+  const [
+    error,
+    setError,
+  ] = useState<
+    string | null
+  >(
+    null,
+  );
+
+  const abortControllerReference =
+    useRef<
+      AbortController | null
+    >(
+      null,
+    );
+
+  const isMountedReference =
+    useRef(
+      true,
+    );
+
+  const isSendingReference =
+    useRef(
+      false,
+    );
+
+  const activeStorageKeyReference =
+    useRef<
+      string | null
+    >(
+      null,
+    );
+
+  const activeAccountIdReference =
+    useRef<
+      string | null
+    >(
+      null,
+    );
+
+  const storageReadyReference =
+    useRef(
+      false,
+    );
+
+  const resetConversationState =
+    useCallback(
+      (): void => {
+        abortControllerReference
+          .current
+          ?.abort();
+
+        abortControllerReference.current =
+          null;
+
+        isSendingReference.current =
+          false;
+
+        setMessages(
+          [],
+        );
+
+        setError(
+          null,
+        );
+
+        setIsLoading(
+          false,
+        );
+      },
+      [],
+    );
+
+  useEffect(
+    () => {
+      isMountedReference.current =
+        true;
+
+      return () => {
+        isMountedReference.current =
+          false;
+
+        isSendingReference.current =
+          false;
+
+        abortControllerReference
+          .current
+          ?.abort();
+
+        abortControllerReference.current =
+          null;
+      };
+    },
+    [],
+  );
+
+  useEffect(
+    () => {
+      if (
+        authenticationStatus === "LOADING"
+      ) {
+        return undefined;
+      }
+
+      if (
+        authenticationStatus === "AUTHENTICATED"
+        && accountId
+        && username
+      ) {
+        if (
+          activeAccountIdReference.current === accountId
+          && storageReadyReference.current
+        ) {
+          return undefined;
+        }
+
+        const storageKey =
+          createAccountStorageKey(
+            accountId,
+          );
+
+        const previousStorageKey =
+          activeStorageKeyReference.current;
+
+        const storedMessages =
+          readStoredMessages(
+            storageKey,
+          );
+
+        const nextMessages =
+          createAuthenticatedConversation(
+            storedMessages,
+            username,
+          );
+
+        const timeoutIdentifier =
+          window.setTimeout(
+            () => {
+              if (
+                previousStorageKey
+                && previousStorageKey !== storageKey
+              ) {
+                removeStoredMessages(
+                  previousStorageKey,
+                );
+              }
+
+              removeLegacyStoredMessages();
+
+              activeStorageKeyReference.current =
+                storageKey;
+
+              activeAccountIdReference.current =
+                accountId;
+
+              storageReadyReference.current =
+                true;
+
+              abortControllerReference
+                .current
+                ?.abort();
+
+              abortControllerReference.current =
+                null;
+
+              isSendingReference.current =
+                false;
+
+              setMessages(
+                nextMessages,
+              );
+
+              setError(
+                null,
+              );
+
+              setIsLoading(
+                false,
+              );
+            },
+            0,
+          );
+
+        return () => {
+          window.clearTimeout(
+            timeoutIdentifier,
+          );
+        };
+      }
+
+      if (
+        authenticationStatus === "UNAUTHENTICATED"
+      ) {
+        const activeStorageKey =
+          activeStorageKeyReference.current;
+
+        const timeoutIdentifier =
+          window.setTimeout(
+            () => {
+              if (
+                activeStorageKey
+              ) {
+                removeStoredMessages(
+                  activeStorageKey,
+                );
+              }
+
+              removeLegacyStoredMessages();
+
+              activeStorageKeyReference.current =
+                null;
+
+              activeAccountIdReference.current =
+                null;
+
+              storageReadyReference.current =
+                false;
+
+              resetConversationState();
+            },
+            0,
+          );
+
+        return () => {
+          window.clearTimeout(
+            timeoutIdentifier,
+          );
+        };
+      }
+
+      return undefined;
+    },
+    [
+      accountId,
+      authenticationStatus,
+      resetConversationState,
+      username,
+    ],
+  );
+
+  useEffect(
+    () => {
+      const storageKey =
+        activeStorageKeyReference.current;
+
+      if (
+        !storageReadyReference.current
+        || !storageKey
+        || authenticationStatus !== "AUTHENTICATED"
+      ) {
         return;
       }
 
-      const history = messages
-        .filter(
-          (storedMessage) =>
-            storedMessage.status ===
-            "completed",
-        )
-        .slice(
-          -ASSISTANT_CONFIG.maxHistoryMessages,
-        )
-        .map((storedMessage) => ({
-          role: storedMessage.role,
-
-          content:
-            storedMessage.role ===
-            "assistant"
-              ? storedMessage
-                  .translations?.[
-                  locale
-                ] ??
-                storedMessage.content
-              : storedMessage.content,
-        }));
-
-      const userMessage: AssistantMessage = {
-        id:
-          createAssistantMessageId(
-            "user",
-          ),
-        role: "user",
-        content: normalizedMessage,
-        createdAt: Date.now(),
-        status: "completed",
-      };
-
-      setMessages(
-        (currentMessages) =>
-          limitStoredMessages([
-            ...currentMessages,
-            userMessage,
-          ]),
+      writeStoredMessages(
+        storageKey,
+        messages,
       );
+    },
+    [
+      authenticationStatus,
+      messages,
+    ],
+  );
 
-      setError(null);
-      setIsLoading(true);
+  const openAssistant =
+    useCallback(
+      (): void => {
+        setIsOpen(
+          true,
+        );
+      },
+      [],
+    );
 
-      isSendingRef.current = true;
+  const closeAssistant =
+    useCallback(
+      (): void => {
+        setIsOpen(
+          false,
+        );
+      },
+      [],
+    );
 
-      abortControllerRef.current?.abort();
+  const toggleAssistant =
+    useCallback(
+      (): void => {
+        setIsOpen(
+          (
+            currentValue,
+          ) =>
+            !currentValue,
+        );
+      },
+      [],
+    );
 
-      const controller =
-        new AbortController();
+  const clearError =
+    useCallback(
+      (): void => {
+        setError(
+          null,
+        );
+      },
+      [],
+    );
 
-      abortControllerRef.current =
-        controller;
+  const clearMessages =
+    useCallback(
+      (): void => {
+        abortControllerReference
+          .current
+          ?.abort();
 
-      try {
-        const response =
-          await requestAssistantResponse(
-            {
-              message:
-                normalizedMessage,
-              locale,
-              history,
-            },
-            controller.signal,
+        abortControllerReference.current =
+          null;
+
+        isSendingReference.current =
+          false;
+
+        const storageKey =
+          activeStorageKeyReference.current
+          ?? (
+            accountId
+              ? createAccountStorageKey(
+                  accountId,
+                )
+              : null
           );
 
         if (
-          controller.signal.aborted ||
-          !isMountedRef.current
+          authenticated
+          && accountId
+          && username
+        ) {
+          const welcomeMessages:
+            AssistantMessage[] = [
+              createWelcomeMessage(
+                username,
+              ),
+            ];
+
+          activeStorageKeyReference.current =
+            storageKey;
+
+          activeAccountIdReference.current =
+            accountId;
+
+          storageReadyReference.current =
+            true;
+
+          setMessages(
+            welcomeMessages,
+          );
+
+          setError(
+            null,
+          );
+
+          setIsLoading(
+            false,
+          );
+
+          if (
+            storageKey
+          ) {
+            writeStoredMessages(
+              storageKey,
+              welcomeMessages,
+            );
+          }
+
+          return;
+        }
+
+        resetConversationState();
+
+        if (
+          storageKey
+        ) {
+          removeStoredMessages(
+            storageKey,
+          );
+        }
+      },
+      [
+        accountId,
+        authenticated,
+        resetConversationState,
+        username,
+      ],
+    );
+
+  const sendMessage =
+    useCallback(
+      async ({
+        message,
+        locale,
+      }: SendAssistantMessageOptions):
+        Promise<void> => {
+        const normalizedMessage =
+          message.trim();
+
+        if (
+          normalizedMessage.length === 0
+          || isSendingReference.current
         ) {
           return;
         }
 
-        const assistantMessage:
-          AssistantMessage = {
-          id:
-            createAssistantMessageId(
-              "assistant",
-            ),
+        const currentCopy =
+          getAssistantCopy(
+            locale,
+          );
 
-          role: "assistant",
-
-          content:
-            response.message,
-
-          translations:
-            response.translations,
-
-          createdAt: Date.now(),
-
-          status: "completed",
-
-          sources:
-            response.sources,
-        };
-
-        setMessages(
-          (currentMessages) =>
-            limitStoredMessages([
-              ...currentMessages,
-              assistantMessage,
-            ]),
-        );
-      } catch (caughtError) {
         if (
-          controller.signal.aborted ||
-          !isMountedRef.current
+          normalizedMessage.length
+          > ASSISTANT_CONFIG.maxMessageLength
         ) {
+          setError(
+            currentCopy.messageTooLong,
+          );
+
           return;
         }
 
-        const errorMessage =
-          caughtError instanceof
-          AssistantServiceError
-            ? caughtError.message
-            : currentCopy.errorMessage;
+        const history =
+          messages
+            .filter(
+              (
+                storedMessage,
+              ) =>
+                storedMessage.status === "completed",
+            )
+            .slice(
+              -ASSISTANT_CONFIG.maxHistoryMessages,
+            )
+            .map(
+              (
+                storedMessage,
+              ) => ({
+                role:
+                  storedMessage.role,
 
-        const spanishCopy =
-          getAssistantCopy("es");
+                content:
+                  storedMessage.role === "assistant"
+                    ? storedMessage
+                        .translations?.[
+                          locale
+                        ]
+                      ?? storedMessage.content
+                    : storedMessage.content,
+              }),
+            );
 
-        const englishCopy =
-          getAssistantCopy("en");
-
-        const errorTranslations:
-          AssistantTranslations = {
-          es:
-            locale === "es"
-              ? errorMessage
-              : spanishCopy.errorMessage,
-
-          en:
-            locale === "en"
-              ? errorMessage
-              : englishCopy.errorMessage,
-        };
-
-        setError(errorMessage);
-
-        const assistantErrorMessage:
+        const userMessage:
           AssistantMessage = {
-          id:
-            createAssistantMessageId(
-              "assistant",
-            ),
+            id:
+              createAssistantMessageId(
+                "user",
+              ),
 
-          role: "assistant",
+            role:
+              "user",
 
-          content:
-            errorTranslations[locale],
+            content:
+              normalizedMessage,
 
-          translations:
-            errorTranslations,
+            createdAt:
+              Date.now(),
 
-          createdAt: Date.now(),
+            status:
+              "completed",
+          };
 
-          status: "error",
-        };
+        if (
+          authenticated
+          && username
+          && asksForAccountName(
+            normalizedMessage,
+          )
+        ) {
+          const nameMessage =
+            createAccountNameMessage(
+              username,
+            );
+
+          setMessages(
+            (
+              currentMessages,
+            ) =>
+              limitStoredMessages([
+                ...currentMessages,
+                userMessage,
+                nameMessage,
+              ]),
+          );
+
+          setError(
+            null,
+          );
+
+          setIsLoading(
+            false,
+          );
+
+          return;
+        }
 
         setMessages(
-          (currentMessages) =>
+          (
+            currentMessages,
+          ) =>
             limitStoredMessages([
               ...currentMessages,
-              assistantErrorMessage,
+              userMessage,
             ]),
         );
-      } finally {
-        if (
-          abortControllerRef.current ===
-          controller
-        ) {
-          abortControllerRef.current =
-            null;
-        }
 
-        isSendingRef.current = false;
+        setError(
+          null,
+        );
 
-        if (isMountedRef.current) {
-          setIsLoading(false);
+        setIsLoading(
+          true,
+        );
+
+        isSendingReference.current =
+          true;
+
+        abortControllerReference
+          .current
+          ?.abort();
+
+        const controller =
+          new AbortController();
+
+        abortControllerReference.current =
+          controller;
+
+        try {
+          const response =
+            await requestAssistantResponse(
+              {
+                message:
+                  normalizedMessage,
+
+                locale,
+                history,
+              },
+              controller.signal,
+            );
+
+          if (
+            controller.signal.aborted
+            || !isMountedReference.current
+          ) {
+            return;
+          }
+
+          const assistantMessage:
+            AssistantMessage = {
+              id:
+                createAssistantMessageId(
+                  "assistant",
+                ),
+
+              role:
+                "assistant",
+
+              content:
+                response.message,
+
+              translations:
+                response.translations,
+
+              createdAt:
+                Date.now(),
+
+              status:
+                "completed",
+
+              sources:
+                response.sources,
+
+              ...(response.tools
+                ? {
+                    tools:
+                      response.tools,
+                  }
+                : {}),
+            };
+
+          setMessages(
+            (
+              currentMessages,
+            ) =>
+              limitStoredMessages([
+                ...currentMessages,
+                assistantMessage,
+              ]),
+          );
+        } catch (caughtError) {
+          if (
+            controller.signal.aborted
+            || !isMountedReference.current
+          ) {
+            return;
+          }
+
+          const errorMessage =
+            caughtError instanceof AssistantServiceError
+              ? caughtError.message
+              : currentCopy.errorMessage;
+
+          const spanishCopy =
+            getAssistantCopy(
+              "es",
+            );
+
+          const englishCopy =
+            getAssistantCopy(
+              "en",
+            );
+
+          const errorTranslations:
+            AssistantTranslations = {
+              es:
+                locale === "es"
+                  ? errorMessage
+                  : spanishCopy.errorMessage,
+
+              en:
+                locale === "en"
+                  ? errorMessage
+                  : englishCopy.errorMessage,
+            };
+
+          setError(
+            errorMessage,
+          );
+
+          const assistantErrorMessage:
+            AssistantMessage = {
+              id:
+                createAssistantMessageId(
+                  "assistant",
+                ),
+
+              role:
+                "assistant",
+
+              content:
+                errorTranslations[
+                  locale
+                ],
+
+              translations:
+                errorTranslations,
+
+              createdAt:
+                Date.now(),
+
+              status:
+                "error",
+            };
+
+          setMessages(
+            (
+              currentMessages,
+            ) =>
+              limitStoredMessages([
+                ...currentMessages,
+                assistantErrorMessage,
+              ]),
+          );
+        } finally {
+          if (
+            abortControllerReference.current === controller
+          ) {
+            abortControllerReference.current =
+              null;
+          }
+
+          isSendingReference.current =
+            false;
+
+          if (
+            isMountedReference.current
+          ) {
+            setIsLoading(
+              false,
+            );
+          }
         }
-      }
-    },
-    [messages],
-  );
+      },
+      [
+        authenticated,
+        messages,
+        username,
+      ],
+    );
 
   return {
     isOpen,
