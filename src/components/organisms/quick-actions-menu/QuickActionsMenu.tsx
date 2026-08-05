@@ -249,6 +249,9 @@ export function QuickActionsMenu({
     authenticated:
       isAuthenticated,
 
+    panelOpen:
+      isAuthenticationOpen,
+
     signOut,
   } = useAuth();
 
@@ -268,17 +271,31 @@ export function QuickActionsMenu({
 
   const availableActions =
     useMemo<readonly QuickAction[]>(
-      () =>
-        isAuthenticated
+      () => {
+        if (
+          isAuthenticationOpen
+        ) {
+          return PUBLIC_QUICK_ACTIONS.filter(
+            (
+              action,
+            ) =>
+              action.id === "appearance"
+              || action.id === "language",
+          );
+        }
+
+        return isAuthenticated
           ? [
               ...PUBLIC_QUICK_ACTIONS,
               ...ACCOUNT_QUICK_ACTIONS,
             ]
           : [
               ...PUBLIC_QUICK_ACTIONS,
-            ],
+            ];
+      },
       [
         isAuthenticated,
+        isAuthenticationOpen,
       ],
     );
 
@@ -612,7 +629,7 @@ export function QuickActionsMenu({
           handleWheel
         }
         className={cn(
-          "fixed z-50",
+          "fixed z-[110]",
 
           "bottom-[calc(1.25rem+env(safe-area-inset-bottom))]",
           "left-[calc(1.25rem+env(safe-area-inset-left))]",
@@ -791,6 +808,7 @@ export function QuickActionsMenu({
         open={
           isNotificationsOpen
           && isAuthenticated
+          && !isAuthenticationOpen
         }
         onClose={
           closeNotifications
@@ -806,6 +824,7 @@ export function QuickActionsMenu({
         }
         isOpen={
           isAssistantOpen
+          && !isAuthenticationOpen
         }
         onClose={
           closeAssistant

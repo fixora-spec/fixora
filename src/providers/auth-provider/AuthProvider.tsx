@@ -76,6 +76,14 @@ let clientSessionStateCache:
   AuthenticationSessionState
   | null = null;
 
+/*
+ * Conserva la vista de autenticación durante los cambios de idioma.
+ * No contiene credenciales ni datos sensibles.
+ */
+let clientPanelStateCache:
+  AuthenticationPanelState
+  | null = null;
+
 function isAbortError(
   error: unknown,
 ): boolean {
@@ -124,7 +132,12 @@ export function AuthProvider({
   ] = useState<
     AuthenticationPanelState
   >(
-    INITIAL_PANEL_STATE,
+    () => (
+      typeof window !== "undefined"
+      && clientPanelStateCache
+        ? clientPanelStateCache
+        : INITIAL_PANEL_STATE
+    ),
   );
 
   const requestSequenceReference =
@@ -146,6 +159,16 @@ export function AuthProvider({
     },
     [
       sessionState,
+    ],
+  );
+
+  useEffect(
+    () => {
+      clientPanelStateCache =
+        panelState;
+    },
+    [
+      panelState,
     ],
   );
 

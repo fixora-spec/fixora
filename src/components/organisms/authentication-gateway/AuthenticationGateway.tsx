@@ -764,51 +764,52 @@ export function AuthenticationGateway({
       ],
     );
 
-useEffect(
-  () => {
-    const hydrationTimeoutId =
-      window.setTimeout(
-        () => {
-          const storedState =
-            readStoredAuthenticationFlow();
+  useEffect(
+    () => {
+      const hydrationTimeoutId =
+        window.setTimeout(
+          () => {
+            const storedState =
+              readStoredAuthenticationFlow();
 
-          if (
-            storedState !== null
-          ) {
-            setPasswordRecoveryRole(
-              storedState.passwordRecoveryRole,
+            if (
+              storedState !== null
+            ) {
+              setPasswordRecoveryRole(
+                storedState.passwordRecoveryRole,
+              );
+
+              setVerificationState(
+                storedState.verificationState,
+              );
+
+              setPasswordResetState(
+                storedState.passwordResetState,
+              );
+
+              setAuthenticationView(
+                storedState.view,
+              );
+            }
+
+            setStorageHydrated(
+              true,
             );
+          },
+          0,
+        );
 
-            setVerificationState(
-              storedState.verificationState,
-            );
+      return () => {
+        window.clearTimeout(
+          hydrationTimeoutId,
+        );
+      };
+    },
+    [
+      setAuthenticationView,
+    ],
+  );
 
-            setPasswordResetState(
-              storedState.passwordResetState,
-            );
-
-            setAuthenticationView(
-              storedState.view,
-            );
-          }
-
-          setStorageHydrated(
-            true,
-          );
-        },
-        0,
-      );
-
-    return () => {
-      window.clearTimeout(
-        hydrationTimeoutId,
-      );
-    };
-  },
-  [
-    setAuthenticationView,
-  ],
-);
   useEffect(
     () => {
       if (
@@ -934,6 +935,30 @@ useEffect(
 
       panelReference.current
         ?.focus();
+    },
+    [
+      panelOpen,
+    ],
+  );
+
+  useEffect(
+    () => {
+      if (
+        !panelOpen
+      ) {
+        return undefined;
+      }
+
+      const previousOverflow =
+        document.body.style.overflow;
+
+      document.body.style.overflow =
+        "hidden";
+
+      return () => {
+        document.body.style.overflow =
+          previousOverflow;
+      };
     },
     [
       panelOpen,
@@ -1180,6 +1205,14 @@ useEffect(
       data-authentication-view={
         panelView
       }
+      className={[
+        "fixed inset-0 z-[100]",
+        "overflow-y-auto overscroll-contain",
+        "bg-[var(--fixora-background)]",
+        "text-[var(--fixora-foreground)]",
+      ].join(
+        " ",
+      )}
     >
       <header>
         <button
