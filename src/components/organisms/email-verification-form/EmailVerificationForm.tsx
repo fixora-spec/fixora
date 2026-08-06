@@ -58,7 +58,7 @@ function isAbortError(
   error: unknown,
 ): boolean {
   return (
-    error instanceof DOMException
+    error instanceof Error
     && error.name === "AbortError"
   );
 }
@@ -78,9 +78,9 @@ function normalizeVerificationCode(
     );
 }
 
-function validateAccountId(
+function normalizeAccountId(
   accountId: string,
-): string {
+): string | null {
   const normalizedAccountId =
     accountId.trim();
 
@@ -89,9 +89,7 @@ function validateAccountId(
       normalizedAccountId,
     )
   ) {
-    throw new Error(
-      "El identificador de la cuenta no es válido.",
-    );
+    return null;
   }
 
   return normalizedAccountId;
@@ -140,10 +138,6 @@ function getVerificationErrorMessage(
       error,
     )
   ) {
-    return error.message;
-  }
-
-  if (error instanceof Error) {
     return error.message;
   }
 
@@ -196,7 +190,7 @@ export function EmailVerificationForm({
     );
 
   const normalizedAccountId =
-    validateAccountId(
+    normalizeAccountId(
       accountId,
     );
 
@@ -275,6 +269,9 @@ export function EmailVerificationForm({
     0,
   );
 
+  const mountedReference =
+    useRef(false);
+
   const verificationAbortControllerReference =
     useRef<
       AbortController | null
@@ -301,7 +298,9 @@ export function EmailVerificationForm({
 
   const controlsDisabled =
     disabled
-    || busy;
+    || busy
+    || status === "SUCCESS"
+    || normalizedAccountId === null;
 
   const resendDisabled =
     controlsDisabled
@@ -355,7 +354,11 @@ export function EmailVerificationForm({
 
   useEffect(
     () => {
+      mountedReference.current = true;
+
       return () => {
+        mountedReference.current = false;
+
         verificationAbortControllerReference
           .current
           ?.abort();
@@ -408,7 +411,21 @@ export function EmailVerificationForm({
     ): Promise<void> => {
       event.preventDefault();
 
-      if (controlsDisabled) {
+      if (disabled || busy || status === "SUCCESS") {
+        return;
+      }
+
+      if (normalizedAccountId === null) {
+        setStatus(
+          "ERROR",
+        );
+
+        setErrorMessage(
+          translations(
+            "errors.unknown",
+          ),
+        );
+
         return;
       }
 
@@ -481,6 +498,14 @@ export function EmailVerificationForm({
             },
           );
 
+        if (
+          !mountedReference.current
+          || verificationAbortControllerReference.current !== abortController
+          || abortController.signal.aborted
+        ) {
+          return;
+        }
+
         setCode(
           "",
         );
@@ -501,7 +526,11 @@ export function EmailVerificationForm({
           );
         }
       } catch (error) {
-        if (isAbortError(error)) {
+        if (
+          isAbortError(error)
+          || !mountedReference.current
+          || verificationAbortControllerReference.current !== abortController
+        ) {
           return;
         }
 
@@ -531,7 +560,7 @@ export function EmailVerificationForm({
 
   const handleResend =
     async (): Promise<void> => {
-      if (resendDisabled) {
+      if (resendDisabled || normalizedAccountId === null) {
         return;
       }
 
@@ -569,6 +598,14 @@ export function EmailVerificationForm({
             },
           );
 
+        if (
+          !mountedReference.current
+          || resendAbortControllerReference.current !== abortController
+          || abortController.signal.aborted
+        ) {
+          return;
+        }
+
         setCurrentVerificationExpiresAt(
           result.verificationExpiresAt,
         );
@@ -589,7 +626,11 @@ export function EmailVerificationForm({
           result,
         );
       } catch (error) {
-        if (isAbortError(error)) {
+        if (
+          isAbortError(error)
+          || !mountedReference.current
+          || resendAbortControllerReference.current !== abortController
+        ) {
           return;
         }
 

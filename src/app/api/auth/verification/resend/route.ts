@@ -1,6 +1,11 @@
-import { NextResponse } from "next/server";
+import type {
+  NextResponse,
+} from "next/server";
 
-import { AUTH_RATE_LIMIT_ACTIONS } from "@/config/auth.config";
+import {
+  AUTH_RATE_LIMIT_ACTIONS,
+  AUTH_REQUEST_LIMITS,
+} from "@/config/auth.config";
 
 import {
   isAuthServiceError,
@@ -8,34 +13,58 @@ import {
   type AuthServiceErrorCode,
 } from "@/lib/auth/auth.service";
 
-import { consumeDefaultAuthRateLimit } from "@/lib/auth/rate-limit";
-import { getRequestIpAddress } from "@/lib/auth/session";
+import {
+  consumeDefaultAuthRateLimit,
+} from "@/lib/auth/rate-limit";
 
-import type { AuthErrorCode } from "@/types/auth";
-import type { Locale } from "@/types/locale";
+import {
+  getRequestIpAddress,
+} from "@/lib/auth/session";
+
+import {
+  createApiErrorResponse,
+  createApiSuccessResponse,
+} from "@/lib/http/api-response";
+
+import {
+  isJsonBodyError,
+  parseJsonBody,
+  type JsonBodyError,
+} from "@/lib/http/parse-json-body";
+
+import {
+  isRequestOriginError,
+  verifyRequestOrigin,
+} from "@/lib/http/verify-request-origin";
+
+import type {
+  AuthErrorCode,
+  AuthFieldError,
+} from "@/types/auth";
+
+import type {
+  Locale,
+} from "@/types/locale";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const MAXIMUM_REQUEST_BODY_BYTES = 8_192;
+const BODY_LIMIT_BYTES = Math.min(
+  AUTH_REQUEST_LIMITS.maximumJsonBodyBytes,
+  8_192,
+);
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
-type JsonRecord = Record<string, unknown>;
+const UNKNOWN_IP_IDENTIFIER = "unknown";
 
-type ApiFieldError = {
-  field: string;
-  code: AuthErrorCode;
-};
-
-type LocalizedMessages = {
+type Messages = {
   forbiddenOrigin: string;
   invalidContentType: string;
   requestTooLarge: string;
   invalidJson: string;
-  invalidAccountId: string;
-  invalidLocale: string;
+  invalidRequest: string;
   rateLimited: string;
   accountNotFound: string;
   accountUnavailable: string;
@@ -44,206 +73,120 @@ type LocalizedMessages = {
   internalError: string;
 };
 
-function isRecord(
-  value: unknown,
-): value is JsonRecord {
-  return (
-    typeof value === "object"
-    && value !== null
-    && !Array.isArray(value)
-  );
+function resolveLocale(
+  request: Request,
+  body?: unknown,
+): Locale {
+  if (
+    typeof body === "object"
+    && body !== null
+    && !Array.isArray(body)
+    && "locale" in body
+    && (body.locale === "es" || body.locale === "en")
+  ) {
+    return body.locale;
+  }
+
+  const explicitLocale = request.headers
+    .get("x-fixora-locale")
+    ?.trim()
+    .toLowerCase();
+
+  if (explicitLocale === "en") {
+    return "en";
+  }
+
+  return request.headers
+    .get("accept-language")
+    ?.trim()
+    .toLowerCase()
+    .startsWith("en")
+    ? "en"
+    : "es";
 }
 
-function getMessages(
-  locale: Locale,
-): LocalizedMessages {
+function getMessages(locale: Locale): Messages {
   if (locale === "en") {
     return {
-      forbiddenOrigin:
-        "The request origin is not allowed.",
-
+      forbiddenOrigin: "The request origin is not allowed.",
       invalidContentType:
-        "The request must use application/json.",
-
-      requestTooLarge:
-        "The request body is too large.",
-
-      invalidJson:
-        "The request body does not contain valid JSON.",
-
-      invalidAccountId:
-        "The account identifier is invalid.",
-
-      invalidLocale:
-        "The selected language is invalid.",
-
+        "The request must use an uncompressed JSON body.",
+      requestTooLarge: "The request body is too large.",
+      invalidJson: "The request body does not contain valid JSON.",
+      invalidRequest:
+        "The account identifier or selected language is invalid.",
       rateLimited:
         "Too many verification-code requests were made. Please wait before trying again.",
-
-      accountNotFound:
-        "The requested account does not exist.",
-
+      accountNotFound: "The requested account does not exist.",
       accountUnavailable:
         "The account is not pending email verification.",
-
       resendBlocked:
         "You must wait before requesting another verification code.",
-
       emailDeliveryFailed:
         "The verification email could not be delivered. Please try again.",
-
       internalError:
         "The verification code could not be resent at this time.",
     };
   }
 
   return {
-    forbiddenOrigin:
-      "El origen de la solicitud no está permitido.",
-
+    forbiddenOrigin: "El origen de la solicitud no está permitido.",
     invalidContentType:
-      "La solicitud debe utilizar application/json.",
-
-    requestTooLarge:
-      "El contenido de la solicitud es demasiado grande.",
-
-    invalidJson:
-      "El contenido de la solicitud no contiene un JSON válido.",
-
-    invalidAccountId:
-      "El identificador de la cuenta no es válido.",
-
-    invalidLocale:
-      "El idioma seleccionado no es válido.",
-
+      "La solicitud debe utilizar un cuerpo JSON sin compresión.",
+    requestTooLarge: "El contenido de la solicitud es demasiado grande.",
+    invalidJson: "El contenido de la solicitud no contiene un JSON válido.",
+    invalidRequest:
+      "El identificador de la cuenta o el idioma seleccionado no es válido.",
     rateLimited:
       "Se realizaron demasiadas solicitudes de códigos. Espera antes de intentarlo nuevamente.",
-
-    accountNotFound:
-      "La cuenta solicitada no existe.",
-
+    accountNotFound: "La cuenta solicitada no existe.",
     accountUnavailable:
       "La cuenta no está pendiente de verificación de correo.",
-
     resendBlocked:
       "Debes esperar antes de solicitar otro código de verificación.",
-
     emailDeliveryFailed:
       "No se pudo entregar el correo de verificación. Inténtalo nuevamente.",
-
     internalError:
       "No se pudo reenviar el código de verificación en este momento.",
   };
 }
 
-function hasTrustedOrigin(
-  request: Request,
-): boolean {
-  const origin =
-    request.headers.get(
-      "origin",
-    );
-
-  const fetchSite =
-    request.headers.get(
-      "sec-fetch-site",
-    );
-
-  if (origin === null) {
-    return (
-      fetchSite === null
-      || fetchSite === "same-origin"
-      || fetchSite === "none"
-    );
+function getJsonBodyErrorMessage(
+  error: JsonBodyError,
+  messages: Messages,
+): string {
+  if (error.status === 415) {
+    return messages.invalidContentType;
   }
 
-  try {
-    return (
-      new URL(origin).origin
-      === new URL(request.url).origin
-    );
-  } catch {
-    return false;
+  switch (error.code) {
+    case "BODY_TOO_LARGE":
+      return messages.requestTooLarge;
+
+    case "INVALID_JSON":
+      return messages.invalidJson;
+
+    case "INVALID_REQUEST":
+    default:
+      return messages.invalidRequest;
   }
 }
 
-function hasJsonContentType(
-  request: Request,
-): boolean {
-  return (
-    request.headers
-      .get("content-type")
-      ?.toLowerCase()
-      .includes("application/json")
-    ?? false
-  );
-}
-
-function exceedsMaximumBodySize(
-  request: Request,
-): boolean {
-  const contentLength =
-    request.headers.get(
-      "content-length",
-    );
-
-  if (contentLength === null) {
-    return false;
-  }
-
-  const parsedLength =
-    Number.parseInt(
-      contentLength,
-      10,
-    );
-
-  return (
-    Number.isFinite(parsedLength)
-    && parsedLength
-      > MAXIMUM_REQUEST_BODY_BYTES
-  );
-}
-
-async function readJsonBody(
-  request: Request,
-): Promise<JsonRecord | null> {
-  try {
-    const body: unknown =
-      await request.json();
-
-    return isRecord(body)
-      ? body
-      : null;
-  } catch {
+function normalizeAccountId(value: unknown): string | null {
+  if (typeof value !== "string" || value.length > 36) {
     return null;
   }
-}
 
-function normalizeLocale(
-  value: unknown,
-): Locale | null {
-  return (
-    value === "es"
-    || value === "en"
-  )
-    ? value
+  const accountId = value.trim();
+
+  return UUID_PATTERN.test(accountId)
+    ? accountId.toLowerCase()
     : null;
 }
 
-function normalizeAccountId(
-  value: unknown,
-): string | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-
-  const accountId =
-    value.trim();
-
-  return UUID_PATTERN.test(
-    accountId,
-  )
-    ? accountId.toLowerCase()
+function normalizeLocale(value: unknown): Locale | null {
+  return value === "es" || value === "en"
+    ? value
     : null;
 }
 
@@ -270,7 +213,7 @@ function mapServiceErrorCode(
 
 function getServiceErrorMessage(
   code: AuthServiceErrorCode,
-  messages: LocalizedMessages,
+  messages: Messages,
 ): string {
   switch (code) {
     case "ACCOUNT_NOT_FOUND":
@@ -290,286 +233,165 @@ function getServiceErrorMessage(
   }
 }
 
-function createErrorResponse({
-  status,
-  code,
-  message,
-  fieldErrors = [],
-  retryAfterSeconds = null,
-}: {
-  status: number;
-  code: AuthErrorCode;
-  message: string;
-  fieldErrors?: readonly ApiFieldError[];
-  retryAfterSeconds?: number | null;
-}): NextResponse {
-  const headers:
-    Record<string, string> = {
-      "Cache-Control":
-        "no-store",
+function getRateLimitIdentifiers(
+  request: Request,
+  accountId: string,
+): readonly string[] {
+  const ipAddress = getRequestIpAddress(request) ?? UNKNOWN_IP_IDENTIFIER;
 
-      Pragma:
-        "no-cache",
-    };
+  return [
+    `ip:${ipAddress}`,
+    `account:${accountId}`,
+  ];
+}
 
-  if (
-    typeof retryAfterSeconds
-      === "number"
-    && Number.isFinite(
-      retryAfterSeconds,
-    )
-    && retryAfterSeconds > 0
-  ) {
-    headers["Retry-After"] =
-      String(
-        Math.ceil(
-          retryAfterSeconds,
-        ),
+async function consumeResendLimits(
+  identifiers: readonly string[],
+): Promise<{
+  allowed: boolean;
+  retryAfterSeconds: number;
+}> {
+  let retryAfterSeconds = 0;
+
+  for (const identifier of identifiers) {
+    const result = await consumeDefaultAuthRateLimit(
+      AUTH_RATE_LIMIT_ACTIONS.verificationResend,
+      identifier,
+    );
+
+    if (!result.allowed) {
+      retryAfterSeconds = Math.max(
+        retryAfterSeconds,
+        result.retryAfterSeconds,
       );
+    }
   }
 
-  return NextResponse.json(
-    {
-      success:
-        false,
-
-      error: {
-        code,
-        message,
-
-        fieldErrors:
-          [...fieldErrors],
-
-        ...(retryAfterSeconds
-          ? {
-              retryAfterSeconds:
-                Math.ceil(
-                  retryAfterSeconds,
-                ),
-            }
-          : {}),
-      },
-    },
-    {
-      status,
-      headers,
-    },
-  );
+  return {
+    allowed: retryAfterSeconds === 0,
+    retryAfterSeconds,
+  };
 }
 
 export async function POST(
   request: Request,
 ): Promise<NextResponse> {
-  const fallbackMessages =
-    getMessages("es");
+  const fallbackLocale = resolveLocale(request);
 
-  if (!hasTrustedOrigin(request)) {
-    return createErrorResponse({
-      status:
-        403,
+  try {
+    verifyRequestOrigin(request);
+  } catch (error) {
+    if (isRequestOriginError(error)) {
+      return createApiErrorResponse({
+        status: error.status,
+        code: error.code,
+        message: getMessages(fallbackLocale).forbiddenOrigin,
+      });
+    }
 
-      code:
-        "INVALID_ORIGIN",
-
-      message:
-        fallbackMessages
-          .forbiddenOrigin,
+    return createApiErrorResponse({
+      status: 500,
+      code: "INTERNAL_ERROR",
+      message: getMessages(fallbackLocale).internalError,
     });
   }
 
-  if (!hasJsonContentType(request)) {
-    return createErrorResponse({
-      status:
-        415,
+  let body: Record<string, unknown>;
 
-      code:
-        "INVALID_REQUEST",
+  try {
+    body = await parseJsonBody<Record<string, unknown>>(request, {
+      maximumBytes: BODY_LIMIT_BYTES,
+      requireObject: true,
+    });
+  } catch (error) {
+    if (isJsonBodyError(error)) {
+      return createApiErrorResponse({
+        status: error.status,
+        code: error.code,
+        message: getJsonBodyErrorMessage(
+          error,
+          getMessages(fallbackLocale),
+        ),
+      });
+    }
 
-      message:
-        fallbackMessages
-          .invalidContentType,
+    return createApiErrorResponse({
+      status: 500,
+      code: "INTERNAL_ERROR",
+      message: getMessages(fallbackLocale).internalError,
     });
   }
 
-  if (exceedsMaximumBodySize(request)) {
-    return createErrorResponse({
-      status:
-        413,
-
-      code:
-        "BODY_TOO_LARGE",
-
-      message:
-        fallbackMessages
-          .requestTooLarge,
-    });
-  }
-
-  const body =
-    await readJsonBody(request);
-
-  if (body === null) {
-    return createErrorResponse({
-      status:
-        400,
-
-      code:
-        "INVALID_JSON",
-
-      message:
-        fallbackMessages
-          .invalidJson,
-    });
-  }
-
-  const locale =
-    normalizeLocale(
-      body.locale,
-    );
-
-  const accountId =
-    normalizeAccountId(
-      body.accountId,
-    );
-
-  const messages =
-    getMessages(
-      locale ?? "es",
-    );
-
-  const fieldErrors:
-    ApiFieldError[] = [];
+  const locale = normalizeLocale(body.locale);
+  const accountId = normalizeAccountId(body.accountId);
+  const resolvedLocale = locale ?? resolveLocale(request, body);
+  const messages = getMessages(resolvedLocale);
+  const fieldErrors: AuthFieldError[] = [];
 
   if (accountId === null) {
     fieldErrors.push({
-      field:
-        "accountId",
-
-      code:
-        "INVALID_REQUEST",
+      field: "accountId" as AuthFieldError["field"],
+      code: "INVALID_REQUEST",
     });
   }
 
   if (locale === null) {
     fieldErrors.push({
-      field:
-        "locale",
-
-      code:
-        "INVALID_REQUEST",
+      field: "locale" as AuthFieldError["field"],
+      code: "INVALID_REQUEST",
     });
   }
 
-  if (
-    accountId === null
-    || locale === null
-  ) {
-    return createErrorResponse({
-      status:
-        400,
-
-      code:
-        "VALIDATION_ERROR",
-
-      message:
-        accountId === null
-          ? messages.invalidAccountId
-          : messages.invalidLocale,
-
+  if (accountId === null || locale === null) {
+    return createApiErrorResponse({
+      status: 400,
+      code: "VALIDATION_ERROR",
+      message: messages.invalidRequest,
       fieldErrors,
     });
   }
 
+  const identifiers = getRateLimitIdentifiers(request, accountId);
+
   try {
-    const ipAddress =
-      getRequestIpAddress(
-        request,
-      )
-      ?? "unknown";
-
-    const rateLimit =
-      await consumeDefaultAuthRateLimit(
-        AUTH_RATE_LIMIT_ACTIONS
-          .verificationResend,
-
-        `${accountId}:${ipAddress}`,
-      );
+    const rateLimit = await consumeResendLimits(identifiers);
 
     if (!rateLimit.allowed) {
-      return createErrorResponse({
-        status:
-          429,
-
-        code:
-          "RATE_LIMITED",
-
-        message:
-          messages.rateLimited,
-
-        retryAfterSeconds:
-          rateLimit
-            .retryAfterSeconds,
+      return createApiErrorResponse({
+        status: 429,
+        code: "RATE_LIMITED",
+        message: messages.rateLimited,
+        retryAfterSeconds: Math.max(
+          1,
+          rateLimit.retryAfterSeconds,
+        ),
       });
     }
 
-    const result =
-      await resendVerificationCode(
-        accountId,
-        locale,
-      );
+    const result = await resendVerificationCode(accountId, locale);
 
-    return NextResponse.json(
-      {
-        success:
-          true,
-
-        data:
-          result,
-      },
-      {
-        status:
-          200,
-
-        headers: {
-          "Cache-Control":
-            "no-store",
-
-          Pragma:
-            "no-cache",
-        },
-      },
-    );
+    return createApiSuccessResponse(result);
   } catch (error) {
     if (isAuthServiceError(error)) {
-      return createErrorResponse({
-        status:
-          error.status,
-
-        code:
-          mapServiceErrorCode(
-            error.code,
-          ),
-
-        message:
-          getServiceErrorMessage(
-            error.code,
-            messages,
-          ),
-
-        retryAfterSeconds:
-          error.retryAfterSeconds,
+      return createApiErrorResponse({
+        status: error.status,
+        code: mapServiceErrorCode(error.code),
+        message: getServiceErrorMessage(error.code, messages),
+        ...(error.retryAfterSeconds
+          ? {
+              retryAfterSeconds: Math.max(
+                1,
+                error.retryAfterSeconds,
+              ),
+            }
+          : {}),
       });
     }
 
-    return createErrorResponse({
-      status:
-        500,
-
-      code:
-        "INTERNAL_ERROR",
-
-      message:
-        messages.internalError,
+    return createApiErrorResponse({
+      status: 500,
+      code: "INTERNAL_ERROR",
+      message: messages.internalError,
     });
   }
 }

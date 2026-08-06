@@ -4,23 +4,22 @@ import {
   findAccountById,
   toAccountPublicRecord,
 } from "@/lib/auth/account.repository";
-
+import { resolveAccountAccessState } from "@/lib/auth/account-access";
 import {
+  createExpiredSessionCookieHeader,
   getSessionTokenFromRequest,
   revokeAuthSessionByToken,
   touchAuthSession,
   validateAuthSessionToken,
 } from "@/lib/auth/session";
+import {
+  createApiErrorResponse,
+  createApiSuccessResponse,
+} from "@/lib/http/api-response";
+import type { Locale } from "@/types/locale";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-const DEFAULT_COOKIE_NAME = "fixora_session";
-const COOKIE_NAME_PATTERN = /^[A-Za-z0-9_-]{1,64}$/u;
-const MINIMUM_TOKEN_LENGTH = 20;
-const MAXIMUM_TOKEN_LENGTH = 4_096;
-
-type Locale = "es" | "en";
 
 type SessionResult =
   | {
@@ -49,21 +48,14 @@ type SessionResult =
       expiresAt: string;
     };
 
-function resolveLocale(
-  request: Request,
-): Locale {
-  const explicitLocale =
-    request.headers
-      .get("x-fixora-locale")
-      ?.trim()
-      .toLowerCase();
+function resolveLocale(request: Request): Locale {
+  const explicitLocale = request.headers
+    .get("x-fixora-locale")
+    ?.trim()
+    .toLowerCase();
 
   if (explicitLocale === "en") {
     return "en";
-  }
-
-  if (explicitLocale === "es") {
-    return "es";
   }
 
   return request.headers
@@ -74,42 +66,10 @@ function resolveLocale(
     : "es";
 }
 
-function resolveCookieName(): string {
-  const configuredName =
-    process.env.AUTH_SESSION_COOKIE_NAME?.trim();
-
-  return (
-    configuredName
-    && COOKIE_NAME_PATTERN.test(configuredName)
-  )
-    ? configuredName
-    : DEFAULT_COOKIE_NAME;
-}
-
-function isValidToken(
-  value: string | null,
-): value is string {
-  return (
-    value !== null
-    && value.length >= MINIMUM_TOKEN_LENGTH
-    && value.length <= MAXIMUM_TOKEN_LENGTH
-  );
-}
-
-function clearCookie(
-  response: NextResponse,
-): void {
-  response.cookies.set({
-    name: resolveCookieName(),
-    value: "",
-    httpOnly: true,
-    secure:
-      process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    path: "/",
-    expires: new Date(0),
-    maxAge: 0,
-  });
+function getInternalErrorMessage(locale: Locale): string {
+  return locale === "en"
+    ? "The session could not be loaded at this time."
+    : "No se pudo cargar la sesión en este momento.";
 }
 
 function unauthenticatedResult(): SessionResult {
@@ -120,191 +80,126 @@ function unauthenticatedResult(): SessionResult {
   };
 }
 
-function createSessionResponse(
-  result: SessionResult,
-  shouldClearCookie = false,
+function appendExpiredSessionCookie(response: NextResponse): void {
+  response.headers.append(
+    "Set-Cookie",
+    createExpiredSessionCookieHeader(),
+  );
+}
+
+function createUnauthenticatedResponse(
+  shouldClearCookie: boolean,
 ): NextResponse {
-  const response = NextResponse.json(
-    {
-      success: true,
-      data: result,
-    },
-    {
-      status: 200,
-      headers: {
-        "Cache-Control": "no-store",
-        Pragma: "no-cache",
-      },
-    },
+  const response = createApiSuccessResponse(
+    unauthenticatedResult(),
   );
 
   if (shouldClearCookie) {
-    clearCookie(response);
+    appendExpiredSessionCookie(response);
   }
 
   return response;
 }
 
-function createErrorResponse(
-  locale: Locale,
-): NextResponse {
-  const message =
-    locale === "en"
-      ? "The session could not be loaded at this time."
-      : "No se pudo cargar la sesión en este momento.";
-
-  return NextResponse.json(
-    {
-      success: false,
-      error: {
-        code: "SESSION_LOAD_FAILED",
-        message,
-        fieldErrors: [],
-      },
-    },
-    {
-      status: 500,
-      headers: {
-        "Cache-Control": "no-store",
-        Pragma: "no-cache",
-      },
-    },
-  );
+async function revokeSessionBestEffort(
+  sessionToken: string,
+  reason: string,
+  currentDate: Date,
+): Promise<void> {
+  try {
+    await revokeAuthSessionByToken(
+      sessionToken,
+      reason,
+      currentDate,
+    );
+  } catch {
+    // La cookie se elimina aunque la sesión ya no exista o falle la revocación.
+  }
 }
 
 export async function GET(
   request: Request,
 ): Promise<NextResponse> {
-  const locale =
-    resolveLocale(request);
+  const locale = resolveLocale(request);
+  const sessionToken = getSessionTokenFromRequest(request);
 
-  const sessionToken =
-    getSessionTokenFromRequest(
-      request,
-    );
-
-  if (
-    !isValidToken(
-      sessionToken,
-    )
-  ) {
-    return createSessionResponse(
-      unauthenticatedResult(),
-      sessionToken !== null,
-    );
+  if (sessionToken === null) {
+    /*
+     * El helper falla cerrado tanto para una cookie ausente como para una
+     * cookie inválida o duplicada. Enviar una cookie vencida es idempotente
+     * y elimina cualquier valor malformado que haya llegado al navegador.
+     */
+    return createUnauthenticatedResponse(true);
   }
 
-  try {
-    const validation =
-      await validateAuthSessionToken(
-        sessionToken,
-      );
+  const currentDate = new Date();
 
-    if (
-      !validation.valid
-    ) {
-      return createSessionResponse(
-        unauthenticatedResult(),
-        true,
-      );
+  try {
+    const validation = await validateAuthSessionToken(
+      sessionToken,
+      currentDate,
+    );
+
+    if (!validation.valid) {
+      return createUnauthenticatedResponse(true);
     }
 
-    const account =
-      await findAccountById(
-        validation
-          .session
-          .accountId,
-      );
+    const account = await findAccountById(
+      validation.session.accountId,
+    );
 
     if (
       account === null
-      || account.status
-        !== "ACTIVE"
-      || account.emailVerifiedAt
-        === null
+      || account.status !== "ACTIVE"
+      || account.emailVerifiedAt === null
+      || resolveAccountAccessState(account, currentDate) !== "ACTIVE"
     ) {
-      await revokeAuthSessionByToken(
+      await revokeSessionBestEffort(
         sessionToken,
         "ACCOUNT_NOT_ACTIVE",
+        currentDate,
       );
 
-      return createSessionResponse(
-        unauthenticatedResult(),
-        true,
-      );
+      return createUnauthenticatedResponse(true);
     }
 
     try {
       await touchAuthSession(
-        validation
-          .session
-          .sessionId,
+        validation.session.sessionId,
+        currentDate,
       );
     } catch {
       /*
-       * No cerramos una sesión válida solamente
-       * porque falle la actualización de last_seen_at.
+       * No cerramos una sesión válida solamente porque falle la actualización
+       * no crítica de last_seen_at.
        */
     }
 
-    const publicAccount =
-      toAccountPublicRecord(
-        account,
-      );
+    const publicAccount = toAccountPublicRecord(account);
 
-    return createSessionResponse({
-      authenticated:
-        true,
-
+    return createApiSuccessResponse<SessionResult>({
+      authenticated: true,
       account: {
-        accountId:
-          publicAccount.accountId,
-
-        role:
-          publicAccount.role,
-
-        status:
-          publicAccount.status,
-
-        firstNames:
-          publicAccount.firstNames,
-
-        lastNames:
-          publicAccount.lastNames,
-
-        username:
-          publicAccount.username,
-
-        email:
-          publicAccount.email,
-
+        accountId: publicAccount.accountId,
+        role: publicAccount.role,
+        status: publicAccount.status,
+        firstNames: publicAccount.firstNames,
+        lastNames: publicAccount.lastNames,
+        username: publicAccount.username,
+        email: publicAccount.email,
         emailVerifiedAt:
-          publicAccount
-            .emailVerifiedAt
-            ?.toISOString()
-          ?? null,
-
-        createdAt:
-          publicAccount
-            .createdAt
-            .toISOString(),
-
+          publicAccount.emailVerifiedAt?.toISOString() ?? null,
+        createdAt: publicAccount.createdAt.toISOString(),
         lastSignInAt:
-          publicAccount
-            .lastSignInAt
-            ?.toISOString()
-          ?? null,
+          publicAccount.lastSignInAt?.toISOString() ?? null,
       },
-
-      expiresAt:
-        validation
-          .session
-          .expiresAt
-          .toISOString(),
+      expiresAt: validation.session.expiresAt.toISOString(),
     });
   } catch {
-    return createErrorResponse(
-      locale,
-    );
+    return createApiErrorResponse({
+      status: 500,
+      code: "INTERNAL_ERROR",
+      message: getInternalErrorMessage(locale),
+    });
   }
 }

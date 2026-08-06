@@ -1,14 +1,17 @@
 import "server-only";
 
+import {
+  isAccountRole,
+} from "@/types/account";
+
 import type {
   AccountRole,
 } from "@/types/account";
 
-const MINIMUM_ADMIN_ACCESS_YEARS =
-  1;
-
-const MAXIMUM_ADMIN_ACCESS_YEARS =
-  10;
+const MINIMUM_ADMIN_ACCESS_YEARS = 1;
+const MAXIMUM_ADMIN_ACCESS_YEARS = 10;
+const MINIMUM_SUPPORTED_YEAR = 1;
+const MAXIMUM_SUPPORTED_YEAR = 9_999;
 
 export type AccountAccessState =
   | "ACTIVE"
@@ -17,63 +20,50 @@ export type AccountAccessState =
   | "INVALID";
 
 export type AccountAccessRecord = {
-  role:
-    AccountRole;
-
-  accessStartedAt:
-    Date | null;
-
-  accessExpiresAt:
-    Date | null;
+  role: AccountRole;
+  accessStartedAt: Date | null;
+  accessExpiresAt: Date | null;
 };
 
 export type AdministratorAccessWindow = {
-  accessStartedAt:
-    Date;
-
-  accessExpiresAt:
-    Date;
+  accessStartedAt: Date;
+  accessExpiresAt: Date;
 };
 
-function normalizeDate(
-  value:
-    Date,
+function tryNormalizeDate(value: Date | null): Date | null {
+  if (value === null) {
+    return null;
+  }
 
-  fieldName:
-    string,
-): Date {
-  const normalizedDate =
-    new Date(
-      value,
-    );
+  const normalizedDate = new Date(value);
+  const year = normalizedDate.getUTCFullYear();
 
   if (
-    Number.isNaN(
-      normalizedDate.getTime(),
-    )
+    Number.isNaN(normalizedDate.getTime())
+    || year < MINIMUM_SUPPORTED_YEAR
+    || year > MAXIMUM_SUPPORTED_YEAR
   ) {
-    throw new Error(
-      `${fieldName} no contiene una fecha válida.`,
-    );
+    return null;
   }
 
   return normalizedDate;
 }
 
-function validateAccessYears(
-  years:
-    number,
-): number {
+function normalizeDate(value: Date, fieldName: string): Date {
+  const normalizedDate = tryNormalizeDate(value);
+
+  if (!normalizedDate) {
+    throw new Error(`${fieldName} no contiene una fecha válida.`);
+  }
+
+  return normalizedDate;
+}
+
+function validateAccessYears(years: number): number {
   if (
-    !Number.isSafeInteger(
-      years,
-    )
-
-    || years
-      < MINIMUM_ADMIN_ACCESS_YEARS
-
-    || years
-      > MAXIMUM_ADMIN_ACCESS_YEARS
+    !Number.isSafeInteger(years)
+    || years < MINIMUM_ADMIN_ACCESS_YEARS
+    || years > MAXIMUM_ADMIN_ACCESS_YEARS
   ) {
     throw new Error(
       `La vigencia administrativa debe estar entre ${MINIMUM_ADMIN_ACCESS_YEARS} y ${MAXIMUM_ADMIN_ACCESS_YEARS} años.`,
@@ -83,158 +73,89 @@ function validateAccessYears(
   return years;
 }
 
-function addUtcYears(
-  date:
-    Date,
+function addUtcYears(date: Date, years: number): Date {
+  const sourceDate = normalizeDate(date, "date");
+  const targetYear = sourceDate.getUTCFullYear() + years;
 
-  years:
-    number,
-): Date {
-  const sourceDate =
-    normalizeDate(
-      date,
-      "date",
+  if (targetYear > MAXIMUM_SUPPORTED_YEAR) {
+    throw new Error(
+      "La fecha final de la vigencia administrativa queda fuera del intervalo permitido.",
     );
+  }
 
-  const targetYear =
-    sourceDate.getUTCFullYear()
-    + years;
+  const sourceMonth = sourceDate.getUTCMonth();
+  const sourceDay = sourceDate.getUTCDate();
+  const result = new Date(sourceDate);
 
-  const sourceMonth =
-    sourceDate.getUTCMonth();
+  result.setUTCDate(1);
+  result.setUTCFullYear(targetYear);
+  result.setUTCMonth(sourceMonth);
 
-  const sourceDay =
-    sourceDate.getUTCDate();
+  const finalDayOfMonth = new Date(
+    Date.UTC(targetYear, sourceMonth + 1, 0),
+  ).getUTCDate();
 
-  const result =
-    new Date(
-      sourceDate,
-    );
+  result.setUTCDate(Math.min(sourceDay, finalDayOfMonth));
 
-  result.setUTCDate(
-    1,
-  );
-
-  result.setUTCFullYear(
-    targetYear,
-  );
-
-  result.setUTCMonth(
-    sourceMonth,
-  );
-
-  const finalDayOfMonth =
-    new Date(
-      Date.UTC(
-        targetYear,
-        sourceMonth + 1,
-        0,
-      ),
-    ).getUTCDate();
-
-  result.setUTCDate(
-    Math.min(
-      sourceDay,
-      finalDayOfMonth,
-    ),
-  );
-
-  return result;
+  return normalizeDate(result, "accessExpiresAt");
 }
 
 export function createAdministratorAccessWindow(
   years = 5,
   currentDate = new Date(),
 ): AdministratorAccessWindow {
-  const validatedYears =
-    validateAccessYears(
-      years,
-    );
-
-  const accessStartedAt =
-    normalizeDate(
-      currentDate,
-      "currentDate",
-    );
-
-  const accessExpiresAt =
-    addUtcYears(
-      accessStartedAt,
-      validatedYears,
-    );
+  const validatedYears = validateAccessYears(years);
+  const accessStartedAt = normalizeDate(currentDate, "currentDate");
+  const accessExpiresAt = addUtcYears(accessStartedAt, validatedYears);
 
   return {
-    accessStartedAt,
-    accessExpiresAt,
+    accessStartedAt: new Date(accessStartedAt),
+    accessExpiresAt: new Date(accessExpiresAt),
   };
 }
 
 export function resolveAccountAccessState(
-  account:
-    AccountAccessRecord,
-
+  account: AccountAccessRecord,
   currentDate = new Date(),
 ): AccountAccessState {
-  if (
-    account.role === "USER"
-  ) {
-    return (
-      account.accessStartedAt
-        === null
+  if (!account || typeof account !== "object" || !isAccountRole(account.role)) {
+    return "INVALID";
+  }
 
-      && account.accessExpiresAt
-        === null
+  if (account.role === "USER") {
+    return (
+      account.accessStartedAt === null
+      && account.accessExpiresAt === null
     )
       ? "ACTIVE"
       : "INVALID";
   }
 
   if (
-    account.accessStartedAt
-      === null
-
-    || account.accessExpiresAt
-      === null
+    account.accessStartedAt === null
+    || account.accessExpiresAt === null
   ) {
     return "INVALID";
   }
 
-  const normalizedCurrentDate =
-    normalizeDate(
-      currentDate,
-      "currentDate",
-    );
-
-  const accessStartedAt =
-    normalizeDate(
-      account.accessStartedAt,
-      "accessStartedAt",
-    );
-
-  const accessExpiresAt =
-    normalizeDate(
-      account.accessExpiresAt,
-      "accessExpiresAt",
-    );
+  const normalizedCurrentDate = tryNormalizeDate(currentDate);
+  const accessStartedAt = tryNormalizeDate(account.accessStartedAt);
+  const accessExpiresAt = tryNormalizeDate(account.accessExpiresAt);
 
   if (
-    accessExpiresAt.getTime()
-      <= accessStartedAt.getTime()
+    !normalizedCurrentDate
+    || !accessStartedAt
+    || !accessExpiresAt
+    || accessExpiresAt.getTime() <= accessStartedAt.getTime()
   ) {
     return "INVALID";
   }
 
-  if (
-    normalizedCurrentDate.getTime()
-      < accessStartedAt.getTime()
-  ) {
+  if (normalizedCurrentDate.getTime() < accessStartedAt.getTime()) {
     return "NOT_STARTED";
   }
 
-  if (
-    normalizedCurrentDate.getTime()
-      >= accessExpiresAt.getTime()
-  ) {
+  if (normalizedCurrentDate.getTime() >= accessExpiresAt.getTime()) {
     return "EXPIRED";
   }
 
@@ -242,62 +163,35 @@ export function resolveAccountAccessState(
 }
 
 export function hasActiveAccountAccess(
-  account:
-    AccountAccessRecord,
-
+  account: AccountAccessRecord,
   currentDate = new Date(),
 ): boolean {
-  return (
-    resolveAccountAccessState(
-      account,
-      currentDate,
-    )
-    === "ACTIVE"
-  );
+  return resolveAccountAccessState(account, currentDate) === "ACTIVE";
 }
 
 export function getRemainingAccountAccessSeconds(
-  account:
-    AccountAccessRecord,
-
+  account: AccountAccessRecord,
   currentDate = new Date(),
 ): number {
   if (
-    resolveAccountAccessState(
-      account,
-      currentDate,
-    )
-    !== "ACTIVE"
-
-    || account.role
-      !== "ADMIN"
-
-    || account.accessExpiresAt
-      === null
+    resolveAccountAccessState(account, currentDate) !== "ACTIVE"
+    || account.role !== "ADMIN"
+    || account.accessExpiresAt === null
   ) {
     return 0;
   }
 
-  const normalizedCurrentDate =
-    normalizeDate(
-      currentDate,
-      "currentDate",
-    );
+  const normalizedCurrentDate = tryNormalizeDate(currentDate);
+  const accessExpiresAt = tryNormalizeDate(account.accessExpiresAt);
 
-  const accessExpiresAt =
-    normalizeDate(
-      account.accessExpiresAt,
-      "accessExpiresAt",
-    );
+  if (!normalizedCurrentDate || !accessExpiresAt) {
+    return 0;
+  }
 
   return Math.max(
     0,
-
     Math.ceil(
-      (
-        accessExpiresAt.getTime()
-        - normalizedCurrentDate.getTime()
-      ) / 1_000,
+      (accessExpiresAt.getTime() - normalizedCurrentDate.getTime()) / 1_000,
     ),
   );
 }

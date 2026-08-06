@@ -1,4 +1,6 @@
-import { NextResponse } from "next/server";
+import type {
+  NextResponse,
+} from "next/server";
 
 import {
   AUTH_RATE_LIMIT_ACTIONS,
@@ -34,6 +36,7 @@ import {
 import {
   isJsonBodyError,
   parseJsonBody,
+  type JsonBodyError,
 } from "@/lib/http/parse-json-body";
 
 import {
@@ -50,47 +53,29 @@ import type {
   Locale,
 } from "@/types/locale";
 
-export const runtime =
-  "nodejs";
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-export const dynamic =
-  "force-dynamic";
+const BODY_LIMIT_BYTES = Math.min(
+  AUTH_REQUEST_LIMITS.maximumJsonBodyBytes,
+  8_192,
+);
 
-const BODY_LIMIT_BYTES =
-  Math.min(
-    AUTH_REQUEST_LIMITS
-      .maximumJsonBodyBytes,
-
-    8_192,
-  );
+const UNKNOWN_IP_IDENTIFIER = "unknown";
 
 type Messages = {
-  forbiddenOrigin:
-    string;
-
-  invalidRequest:
-    string;
-
-  rateLimited:
-    string;
-
-  invalidCredentials:
-    string;
-
-  emailNotVerified:
-    string;
-
-  accountDisabled:
-    string;
-
-  accountLocked:
-    string;
-
-  roleNotAllowed:
-    string;
-
-  internalError:
-    string;
+  forbiddenOrigin: string;
+  invalidContentType: string;
+  requestTooLarge: string;
+  invalidJson: string;
+  invalidRequest: string;
+  rateLimited: string;
+  invalidCredentials: string;
+  emailNotVerified: string;
+  accountDisabled: string;
+  accountLocked: string;
+  roleNotAllowed: string;
+  internalError: string;
 };
 
 function resolveLocale(
@@ -100,113 +85,102 @@ function resolveLocale(
   if (
     typeof body === "object"
     && body !== null
-    && !Array.isArray(
-      body,
-    )
+    && !Array.isArray(body)
     && "locale" in body
-    && (
-      body.locale === "es"
-      || body.locale === "en"
-    )
+    && (body.locale === "es" || body.locale === "en")
   ) {
     return body.locale;
   }
 
-  const explicitLocale =
-    request.headers
-      .get(
-        "x-fixora-locale",
-      )
-      ?.trim()
-      .toLowerCase();
+  const explicitLocale = request.headers
+    .get("x-fixora-locale")
+    ?.trim()
+    .toLowerCase();
 
-  if (
-    explicitLocale === "en"
-  ) {
+  if (explicitLocale === "en") {
     return "en";
   }
 
   return request.headers
-    .get(
-      "accept-language",
-    )
-    ?.toLowerCase()
-    .startsWith(
-      "en",
-    )
+    .get("accept-language")
+    ?.trim()
+    .toLowerCase()
+    .startsWith("en")
     ? "en"
     : "es";
 }
 
-function getMessages(
-  locale: Locale,
-): Messages {
-  return locale === "en"
-    ? {
-        forbiddenOrigin:
-          "The request origin is not allowed.",
+function getMessages(locale: Locale): Messages {
+  if (locale === "en") {
+    return {
+      forbiddenOrigin: "The request origin is not allowed.",
+      invalidContentType:
+        "The request must use an uncompressed JSON body.",
+      requestTooLarge: "The request body is too large.",
+      invalidJson: "The request body does not contain valid JSON.",
+      invalidRequest: "Enter a valid email address and password.",
+      rateLimited:
+        "Too many sign-in attempts were made. Please wait before trying again.",
+      invalidCredentials: "The email or password is incorrect.",
+      emailNotVerified:
+        "Verify your email address before signing in.",
+      accountDisabled: "This account is not currently active.",
+      accountLocked:
+        "This account is temporarily locked. Please wait before trying again.",
+      roleNotAllowed:
+        "This account cannot use the user sign-in form.",
+      internalError: "Sign-in is temporarily unavailable.",
+    };
+  }
 
-        invalidRequest:
-          "Enter a valid email address and password.",
+  return {
+    forbiddenOrigin: "El origen de la solicitud no está permitido.",
+    invalidContentType:
+      "La solicitud debe utilizar un cuerpo JSON sin compresión.",
+    requestTooLarge: "El contenido de la solicitud es demasiado grande.",
+    invalidJson: "El contenido de la solicitud no contiene un JSON válido.",
+    invalidRequest:
+      "Ingresa un correo electrónico y una contraseña válidos.",
+    rateLimited:
+      "Se realizaron demasiados intentos de inicio de sesión. Espera antes de intentarlo nuevamente.",
+    invalidCredentials: "El correo o la contraseña son incorrectos.",
+    emailNotVerified:
+      "Verifica tu correo electrónico antes de iniciar sesión.",
+    accountDisabled: "Esta cuenta no se encuentra activa actualmente.",
+    accountLocked:
+      "Esta cuenta está bloqueada temporalmente. Espera antes de intentarlo nuevamente.",
+    roleNotAllowed:
+      "Esta cuenta no puede utilizar el acceso de usuario.",
+    internalError:
+      "El inicio de sesión no está disponible temporalmente.",
+  };
+}
 
-        rateLimited:
-          "Too many sign-in attempts were made. Please wait before trying again.",
+function getJsonBodyErrorMessage(
+  error: JsonBodyError,
+  messages: Messages,
+): string {
+  if (error.status === 415) {
+    return messages.invalidContentType;
+  }
 
-        invalidCredentials:
-          "The email or password is incorrect.",
+  switch (error.code) {
+    case "BODY_TOO_LARGE":
+      return messages.requestTooLarge;
 
-        emailNotVerified:
-          "Verify your email address before signing in.",
+    case "INVALID_JSON":
+      return messages.invalidJson;
 
-        accountDisabled:
-          "This account is not currently active.",
-
-        accountLocked:
-          "This account is temporarily locked. Please wait before trying again.",
-
-        roleNotAllowed:
-          "This account cannot use the user sign-in form.",
-
-        internalError:
-          "Sign-in is temporarily unavailable.",
-      }
-    : {
-        forbiddenOrigin:
-          "El origen de la solicitud no está permitido.",
-
-        invalidRequest:
-          "Ingresa un correo electrónico y una contraseña válidos.",
-
-        rateLimited:
-          "Se realizaron demasiados intentos de inicio de sesión. Espera antes de intentarlo nuevamente.",
-
-        invalidCredentials:
-          "El correo o la contraseña son incorrectos.",
-
-        emailNotVerified:
-          "Verifica tu correo electrónico antes de iniciar sesión.",
-
-        accountDisabled:
-          "Esta cuenta no se encuentra activa actualmente.",
-
-        accountLocked:
-          "Esta cuenta está bloqueada temporalmente. Espera antes de intentarlo nuevamente.",
-
-        roleNotAllowed:
-          "Esta cuenta no puede utilizar el acceso de usuario.",
-
-        internalError:
-          "El inicio de sesión no está disponible temporalmente.",
-      };
+    case "INVALID_REQUEST":
+    default:
+      return messages.invalidRequest;
+  }
 }
 
 function mapServiceErrorCode(
-  code:
-    AuthServiceErrorCode,
+  code: AuthServiceErrorCode,
 ): AuthErrorCode {
-  switch (
-    code
-  ) {
+  switch (code) {
     case "INVALID_CREDENTIALS":
       return "INVALID_CREDENTIALS";
 
@@ -214,6 +188,9 @@ function mapServiceErrorCode(
       return "ACCOUNT_NOT_VERIFIED";
 
     case "ACCOUNT_INACTIVE":
+    case "ACCOUNT_ACCESS_NOT_STARTED":
+    case "ACCOUNT_ACCESS_EXPIRED":
+    case "ACCOUNT_ACCESS_INVALID":
       return "ACCOUNT_DISABLED";
 
     case "ACCOUNT_LOCKED":
@@ -228,76 +205,50 @@ function mapServiceErrorCode(
 }
 
 function getServiceErrorMessage(
-  code:
-    AuthServiceErrorCode,
-
-  messages:
-    Messages,
+  code: AuthServiceErrorCode,
+  messages: Messages,
 ): string {
-  switch (
-    code
-  ) {
+  switch (code) {
     case "INVALID_CREDENTIALS":
-      return messages
-        .invalidCredentials;
+      return messages.invalidCredentials;
 
     case "EMAIL_NOT_VERIFIED":
-      return messages
-        .emailNotVerified;
+      return messages.emailNotVerified;
 
     case "ACCOUNT_INACTIVE":
-      return messages
-        .accountDisabled;
+    case "ACCOUNT_ACCESS_NOT_STARTED":
+    case "ACCOUNT_ACCESS_EXPIRED":
+    case "ACCOUNT_ACCESS_INVALID":
+      return messages.accountDisabled;
 
     case "ACCOUNT_LOCKED":
-      return messages
-        .accountLocked;
+      return messages.accountLocked;
 
     case "ROLE_MISMATCH":
-      return messages
-        .roleNotAllowed;
+      return messages.roleNotAllowed;
 
     default:
-      return messages
-        .internalError;
+      return messages.internalError;
   }
 }
 
 function createValidationResponse(
-  locale:
-    Locale,
-
-  fieldErrors:
-    readonly AuthFieldError[],
+  locale: Locale,
+  fieldErrors: readonly AuthFieldError[],
 ): NextResponse {
   return createApiErrorResponse({
-    status:
-      400,
-
-    code:
-      "VALIDATION_ERROR",
-
-    message:
-      getMessages(
-        locale,
-      ).invalidRequest,
-
+    status: 400,
+    code: "VALIDATION_ERROR",
+    message: getMessages(locale).invalidRequest,
     fieldErrors,
   });
 }
 
 function getRateLimitIdentifiers(
-  request:
-    Request,
-
-  email:
-    string,
+  request: Request,
+  email: string,
 ): readonly string[] {
-  const ipAddress =
-    getRequestIpAddress(
-      request,
-    )
-    ?? "unknown";
+  const ipAddress = getRequestIpAddress(request) ?? UNKNOWN_IP_IDENTIFIER;
 
   return [
     `ip:${ipAddress}`,
@@ -306,379 +257,192 @@ function getRateLimitIdentifiers(
 }
 
 async function consumeSignInLimits(
-  identifiers:
-    readonly string[],
+  identifiers: readonly string[],
 ): Promise<{
-  allowed:
-    boolean;
-
-  retryAfterSeconds:
-    number;
+  allowed: boolean;
+  retryAfterSeconds: number;
 }> {
-  let retryAfterSeconds =
-    0;
+  let retryAfterSeconds = 0;
 
-  for (
-    const identifier
-    of identifiers
-  ) {
-    const result =
-      await consumeDefaultAuthRateLimit(
-        AUTH_RATE_LIMIT_ACTIONS
-          .userSignIn,
+  for (const identifier of identifiers) {
+    const result = await consumeDefaultAuthRateLimit(
+      AUTH_RATE_LIMIT_ACTIONS.userSignIn,
+      identifier,
+    );
 
-        identifier,
+    if (!result.allowed) {
+      retryAfterSeconds = Math.max(
+        retryAfterSeconds,
+        result.retryAfterSeconds,
       );
-
-    if (
-      !result.allowed
-    ) {
-      retryAfterSeconds =
-        Math.max(
-          retryAfterSeconds,
-
-          result
-            .retryAfterSeconds,
-        );
     }
   }
 
   return {
-    allowed:
-      retryAfterSeconds === 0,
-
+    allowed: retryAfterSeconds === 0,
     retryAfterSeconds,
   };
 }
 
 async function clearSignInLimits(
-  identifiers:
-    readonly string[],
+  identifiers: readonly string[],
 ): Promise<void> {
   await Promise.allSettled(
-    identifiers.map(
-      (
+    identifiers.map((identifier) =>
+      resetAuthRateLimit(
+        AUTH_RATE_LIMIT_ACTIONS.userSignIn,
         identifier,
-      ) =>
-        resetAuthRateLimit(
-          AUTH_RATE_LIMIT_ACTIONS
-            .userSignIn,
-
-          identifier,
-        ),
+      ),
     ),
   );
 }
 
 function serializeAccount(
-  account:
-    Awaited<
-      ReturnType<
-        typeof signInUser
-      >
-    >["account"],
+  account: Awaited<ReturnType<typeof signInUser>>["account"],
 ) {
   return {
-    accountId:
-      account.accountId,
-
-    role:
-      account.role,
-
-    status:
-      account.status,
-
-    firstNames:
-      account.firstNames,
-
-    lastNames:
-      account.lastNames,
-
-    username:
-      account.username,
-
-    email:
-      account.email,
-
-    emailVerifiedAt:
-      account
-        .emailVerifiedAt
-        ?.toISOString()
-      ?? null,
-
-    createdAt:
-      account
-        .createdAt
-        .toISOString(),
-
-    lastSignInAt:
-      account
-        .lastSignInAt
-        ?.toISOString()
-      ?? null,
+    accountId: account.accountId,
+    role: account.role,
+    status: account.status,
+    firstNames: account.firstNames,
+    lastNames: account.lastNames,
+    username: account.username,
+    email: account.email,
+    emailVerifiedAt: account.emailVerifiedAt?.toISOString() ?? null,
+    createdAt: account.createdAt.toISOString(),
+    lastSignInAt: account.lastSignInAt?.toISOString() ?? null,
   };
 }
 
 export async function POST(
   request: Request,
 ): Promise<NextResponse> {
-  const fallbackLocale =
-    resolveLocale(
-      request,
-    );
+  const fallbackLocale = resolveLocale(request);
 
   try {
-    verifyRequestOrigin(
-      request,
-    );
+    verifyRequestOrigin(request);
   } catch (error) {
-    if (
-      isRequestOriginError(
-        error,
-      )
-    ) {
+    if (isRequestOriginError(error)) {
       return createApiErrorResponse({
-        status:
-          error.status,
-
-        code:
-          error.code,
-
-        message:
-          getMessages(
-            fallbackLocale,
-          ).forbiddenOrigin,
+        status: error.status,
+        code: error.code,
+        message: getMessages(fallbackLocale).forbiddenOrigin,
       });
     }
 
     return createApiErrorResponse({
-      status:
-        500,
-
-      code:
-        "INTERNAL_ERROR",
-
-      message:
-        getMessages(
-          fallbackLocale,
-        ).internalError,
+      status: 500,
+      code: "INTERNAL_ERROR",
+      message: getMessages(fallbackLocale).internalError,
     });
   }
 
-  let body:
-    unknown;
+  let body: unknown;
 
   try {
-    body =
-      await parseJsonBody(
-        request,
-        {
-          maximumBytes:
-            BODY_LIMIT_BYTES,
-
-          requireObject:
-            true,
-        },
-      );
+    body = await parseJsonBody(request, {
+      maximumBytes: BODY_LIMIT_BYTES,
+      requireObject: true,
+    });
   } catch (error) {
-    if (
-      isJsonBodyError(
-        error,
-      )
-    ) {
+    if (isJsonBodyError(error)) {
       return createApiErrorResponse({
-        status:
-          error.status,
-
-        code:
-          error.code,
-
-        message:
-          error.message,
+        status: error.status,
+        code: error.code,
+        message: getJsonBodyErrorMessage(
+          error,
+          getMessages(fallbackLocale),
+        ),
       });
     }
 
     return createApiErrorResponse({
-      status:
-        500,
-
-      code:
-        "INTERNAL_ERROR",
-
-      message:
-        getMessages(
-          fallbackLocale,
-        ).internalError,
+      status: 500,
+      code: "INTERNAL_ERROR",
+      message: getMessages(fallbackLocale).internalError,
     });
   }
 
-  const locale =
-    resolveLocale(
-      request,
-      body,
-    );
+  const locale = resolveLocale(request, body);
+  const messages = getMessages(locale);
 
-  const messages =
-    getMessages(
-      locale,
-    );
-
-  let input:
-    ReturnType<
-      typeof validateSignInRequest
-    >;
+  let input: ReturnType<typeof validateSignInRequest>;
 
   try {
-    input =
-      validateSignInRequest(
-        body,
-      );
+    input = validateSignInRequest(body);
   } catch (error) {
-    if (
-      isAuthValidationError(
-        error,
-      )
-    ) {
-      return createValidationResponse(
-        locale,
-        error.fieldErrors,
-      );
+    if (isAuthValidationError(error)) {
+      return createValidationResponse(locale, error.fieldErrors);
     }
 
     return createApiErrorResponse({
-      status:
-        500,
-
-      code:
-        "INTERNAL_ERROR",
-
-      message:
-        messages.internalError,
+      status: 500,
+      code: "INTERNAL_ERROR",
+      message: messages.internalError,
     });
   }
 
-  const rateLimitIdentifiers =
-    getRateLimitIdentifiers(
-      request,
-      input.email,
-    );
+  const rateLimitIdentifiers = getRateLimitIdentifiers(
+    request,
+    input.email,
+  );
 
   try {
-    const rateLimit =
-      await consumeSignInLimits(
-        rateLimitIdentifiers,
-      );
+    const rateLimit = await consumeSignInLimits(rateLimitIdentifiers);
 
-    if (
-      !rateLimit.allowed
-    ) {
+    if (!rateLimit.allowed) {
       return createApiErrorResponse({
-        status:
-          429,
-
-        code:
-          "RATE_LIMITED",
-
-        message:
-          messages.rateLimited,
-
-        retryAfterSeconds:
-          Math.max(
-            1,
-
-            rateLimit
-              .retryAfterSeconds,
-          ),
+        status: 429,
+        code: "RATE_LIMITED",
+        message: messages.rateLimited,
+        retryAfterSeconds: Math.max(
+          1,
+          rateLimit.retryAfterSeconds,
+        ),
       });
     }
 
-    const result =
-      await signInUser(
-        input,
-        {
-          ipAddress:
-            getRequestIpAddress(
-              request,
-            ),
+    const result = await signInUser(input, {
+      ipAddress: getRequestIpAddress(request),
+      userAgent: getRequestUserAgent(request),
+    });
 
-          userAgent:
-            getRequestUserAgent(
-              request,
-            ),
-        },
-      );
+    await clearSignInLimits(rateLimitIdentifiers);
 
-    await clearSignInLimits(
-      rateLimitIdentifiers,
-    );
-
-    const response =
-      createApiSuccessResponse({
-        account:
-          serializeAccount(
-            result.account,
-          ),
-
-        session: {
-          expiresAt:
-            result
-              .session
-              .expiresAt,
-        },
-      });
+    const response = createApiSuccessResponse({
+      account: serializeAccount(result.account),
+      session: {
+        expiresAt: result.session.expiresAt,
+      },
+    });
 
     response.headers.append(
       "Set-Cookie",
-      result
-        .session
-        .cookieHeader,
+      result.session.cookieHeader,
     );
 
     return response;
   } catch (error) {
-    if (
-      isAuthServiceError(
-        error,
-      )
-    ) {
+    if (isAuthServiceError(error)) {
       return createApiErrorResponse({
-        status:
-          error.status,
-
-        code:
-          mapServiceErrorCode(
-            error.code,
-          ),
-
-        message:
-          getServiceErrorMessage(
-            error.code,
-            messages,
-          ),
-
+        status: error.status,
+        code: mapServiceErrorCode(error.code),
+        message: getServiceErrorMessage(error.code, messages),
         ...(error.retryAfterSeconds
           ? {
-              retryAfterSeconds:
-                Math.max(
-                  1,
-
-                  error
-                    .retryAfterSeconds,
-                ),
+              retryAfterSeconds: Math.max(
+                1,
+                error.retryAfterSeconds,
+              ),
             }
           : {}),
       });
     }
 
     return createApiErrorResponse({
-      status:
-        500,
-
-      code:
-        "INTERNAL_ERROR",
-
-      message:
-        messages.internalError,
+      status: 500,
+      code: "INTERNAL_ERROR",
+      message: messages.internalError,
     });
   }
 }

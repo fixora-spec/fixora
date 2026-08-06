@@ -6,7 +6,9 @@ import type {
   AssistantAuthAction,
   AssistantErrorCode,
   AssistantErrorResponse,
+  AssistantHistoryMessage,
   AssistantKnowledgeSection,
+  AssistantLocale,
   AssistantRequest,
   AssistantResponse,
   AssistantSource,
@@ -16,6 +18,15 @@ import type {
 
 const DEFAULT_ERROR_MESSAGE =
   "No fue posible procesar la solicitud del asistente.";
+
+const ASSISTANT_REQUEST_TIMEOUT_MILLISECONDS = 30_000;
+const ASSISTANT_MAXIMUM_RESPONSE_BYTES = 256 * 1024;
+const ASSISTANT_MAXIMUM_RESPONSE_TEXT_LENGTH = 20_000;
+const ASSISTANT_MAXIMUM_ERROR_LENGTH = 1_000;
+const ASSISTANT_MAXIMUM_SOURCE_TITLE_LENGTH = 300;
+const ASSISTANT_MAXIMUM_SOURCE_ID_LENGTH = 200;
+const ASSISTANT_MAXIMUM_SOURCE_HREF_LENGTH = 2_048;
+const ASSISTANT_MAXIMUM_TOOL_ITEMS = 5;
 
 const ASSISTANT_ERROR_CODES:
   readonly AssistantErrorCode[] = [
@@ -68,9 +79,7 @@ export class AssistantServiceError extends Error {
     code: AssistantErrorCode,
     status?: number,
   ) {
-    super(
-      message,
-    );
+    super(message);
 
     this.name =
       "AssistantServiceError";
@@ -98,6 +107,16 @@ function isRecord(
   );
 }
 
+function hasForbiddenControlCharacters(value: string): boolean {
+  return /[\0]/u.test(value);
+}
+
+function isAssistantLocale(
+  value: unknown,
+): value is AssistantLocale {
+  return value === "es" || value === "en";
+}
+
 function isAssistantErrorCode(
   value: unknown,
 ): value is AssistantErrorCode {
@@ -120,46 +139,73 @@ function isAssistantKnowledgeSection(
   );
 }
 
+function isBoundedText(
+  value: unknown,
+  maximumLength: number,
+): value is string {
+  return (
+    typeof value === "string"
+    && value.trim().length > 0
+    && value.length <= maximumLength
+    && !hasForbiddenControlCharacters(value)
+  );
+}
+
 function isAssistantTranslations(
   value: unknown,
 ): value is AssistantTranslations {
-  if (
-    !isRecord(
-      value,
-    )
-  ) {
+  if (!isRecord(value)) {
     return false;
   }
 
   return (
-    typeof value.es === "string"
-    && value.es.trim().length > 0
-    && typeof value.en === "string"
-    && value.en.trim().length > 0
+    isBoundedText(
+      value.es,
+      ASSISTANT_MAXIMUM_RESPONSE_TEXT_LENGTH,
+    )
+    && isBoundedText(
+      value.en,
+      ASSISTANT_MAXIMUM_RESPONSE_TEXT_LENGTH,
+    )
+  );
+}
+
+function isSafeInternalHref(value: unknown): value is string {
+  if (typeof value !== "string") {
+    return false;
+  }
+
+  return (
+    value.length > 0
+    && value.length <= ASSISTANT_MAXIMUM_SOURCE_HREF_LENGTH
+    && value.startsWith("/")
+    && !value.startsWith("//")
+    && !value.includes("\\")
+    && !/[\r\n\0]/u.test(value)
   );
 }
 
 function isAssistantSource(
   value: unknown,
 ): value is AssistantSource {
-  if (
-    !isRecord(
-      value,
-    )
-  ) {
+  if (!isRecord(value)) {
     return false;
   }
 
   const hasValidHref =
     value.href === undefined
-    || typeof value.href === "string";
+    || isSafeInternalHref(value.href);
 
   return (
-    typeof value.id === "string"
-    && typeof value.title === "string"
-    && isAssistantKnowledgeSection(
-      value.section,
+    isBoundedText(
+      value.id,
+      ASSISTANT_MAXIMUM_SOURCE_ID_LENGTH,
     )
+    && isBoundedText(
+      value.title,
+      ASSISTANT_MAXIMUM_SOURCE_TITLE_LENGTH,
+    )
+    && isAssistantKnowledgeSection(value.section)
     && hasValidHref
   );
 }
@@ -177,17 +223,13 @@ function isAssistantAuthAction(
 
 function isStringArray(
   value: unknown,
+  maximumItemLength: number,
 ): value is readonly string[] {
   return (
-    Array.isArray(
-      value,
-    )
-    && value.every(
-      (
-        item,
-      ) =>
-        typeof item === "string"
-        && item.length > 0,
+    Array.isArray(value)
+    && value.length <= ASSISTANT_MAXIMUM_TOOL_ITEMS
+    && value.every((item) =>
+      isBoundedText(item, maximumItemLength),
     )
   );
 }
@@ -195,44 +237,31 @@ function isStringArray(
 function isAssistantToolPayload(
   value: unknown,
 ): value is AssistantToolPayload {
-  if (
-    !isRecord(
-      value,
-    )
-  ) {
+  if (!isRecord(value)) {
     return false;
   }
 
   const validPasswords =
     value.passwordSuggestions === undefined
-    || isStringArray(
-      value.passwordSuggestions,
-    );
+    || isStringArray(value.passwordSuggestions, 30);
 
   const validAliases =
     value.aliasSuggestions === undefined
-    || isStringArray(
-      value.aliasSuggestions,
-    );
+    || isStringArray(value.aliasSuggestions, 40);
 
   const validAction =
     value.authAction === undefined
-    || isAssistantAuthAction(
-      value.authAction,
-    );
+    || isAssistantAuthAction(value.authAction);
 
   const validRequiresUserInput =
     value.requiresUserInput === undefined
-    || typeof value.requiresUserInput
-      === "boolean";
+    || typeof value.requiresUserInput === "boolean";
 
   const validPasswordLength =
     value.passwordLength === undefined
     || (
       typeof value.passwordLength === "number"
-      && Number.isInteger(
-        value.passwordLength,
-      )
+      && Number.isInteger(value.passwordLength)
       && value.passwordLength >= 8
       && value.passwordLength <= 30
     );
@@ -249,32 +278,23 @@ function isAssistantToolPayload(
 function isAssistantResponse(
   value: unknown,
 ): value is AssistantResponse {
-  if (
-    !isRecord(
-      value,
-    )
-  ) {
+  if (!isRecord(value)) {
     return false;
   }
 
   const hasValidTools =
     value.tools === undefined
-    || isAssistantToolPayload(
-      value.tools,
-    );
+    || isAssistantToolPayload(value.tools);
 
   return (
-    typeof value.message === "string"
-    && value.message.trim().length > 0
-    && isAssistantTranslations(
-      value.translations,
+    isBoundedText(
+      value.message,
+      ASSISTANT_MAXIMUM_RESPONSE_TEXT_LENGTH,
     )
-    && Array.isArray(
-      value.sources,
-    )
-    && value.sources.every(
-      isAssistantSource,
-    )
+    && isAssistantTranslations(value.translations)
+    && Array.isArray(value.sources)
+    && value.sources.length <= ASSISTANT_CONFIG.maxKnowledgeResults
+    && value.sources.every(isAssistantSource)
     && hasValidTools
   );
 }
@@ -282,80 +302,282 @@ function isAssistantResponse(
 function isAssistantErrorResponse(
   value: unknown,
 ): value is AssistantErrorResponse {
-  if (
-    !isRecord(
-      value,
-    )
-  ) {
+  if (!isRecord(value)) {
     return false;
   }
 
   return (
-    typeof value.error === "string"
-    && isAssistantErrorCode(
-      value.code,
-    )
+    isBoundedText(value.error, ASSISTANT_MAXIMUM_ERROR_LENGTH)
+    && isAssistantErrorCode(value.code)
   );
+}
+
+function isJsonContentType(value: string | null): boolean {
+  if (!value) {
+    return false;
+  }
+
+  const mediaType = value
+    .split(";", 1)[0]
+    ?.trim()
+    .toLowerCase();
+
+  return (
+    mediaType === "application/json"
+    || mediaType?.endsWith("+json") === true
+  );
+}
+
+function readResponseContentLength(response: Response): number | null {
+  const value = response.headers.get("content-length")?.trim();
+
+  if (!value) {
+    return null;
+  }
+
+  if (!/^\d+$/u.test(value)) {
+    return null;
+  }
+
+  const parsedValue = Number.parseInt(value, 10);
+
+  return Number.isSafeInteger(parsedValue)
+    ? parsedValue
+    : null;
+}
+
+async function cancelResponseReader(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+): Promise<void> {
+  try {
+    await reader.cancel();
+  } catch {
+    // La conexión puede haber terminado antes de cancelar la lectura.
+  }
+}
+
+async function readResponseBodyWithLimit(
+  response: Response,
+  locale: AssistantLocale,
+): Promise<Uint8Array | null> {
+  const declaredLength = readResponseContentLength(response);
+
+  if (
+    declaredLength !== null
+    && declaredLength > ASSISTANT_MAXIMUM_RESPONSE_BYTES
+  ) {
+    throw new AssistantServiceError(
+      locale === "es"
+        ? "El asistente devolvió una respuesta demasiado grande."
+        : "The assistant returned a response that was too large.",
+      "INTERNAL_ERROR",
+      response.status,
+    );
+  }
+
+  if (!response.body) {
+    return null;
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+
+  try {
+    while (true) {
+      const result = await reader.read();
+
+      if (result.done) {
+        break;
+      }
+
+      const chunk = result.value;
+
+      if (chunk.byteLength > ASSISTANT_MAXIMUM_RESPONSE_BYTES - totalBytes) {
+        await cancelResponseReader(reader);
+
+        throw new AssistantServiceError(
+          locale === "es"
+            ? "El asistente devolvió una respuesta demasiado grande."
+            : "The assistant returned a response that was too large.",
+          "INTERNAL_ERROR",
+          response.status,
+        );
+      }
+
+      chunks.push(chunk);
+      totalBytes += chunk.byteLength;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const body = new Uint8Array(totalBytes);
+  let offset = 0;
+
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+
+  return body;
 }
 
 async function parseResponseBody(
   response: Response,
+  locale: AssistantLocale,
 ): Promise<unknown> {
-  const contentType =
-    response.headers.get(
-      "content-type",
-    ) ?? "";
+  if (!isJsonContentType(response.headers.get("content-type"))) {
+    return null;
+  }
 
-  if (
-    !contentType.includes(
-      "application/json",
-    )
-  ) {
+  const body = await readResponseBodyWithLimit(response, locale);
+
+  if (!body || body.byteLength === 0) {
+    return null;
+  }
+
+  let text: string;
+
+  try {
+    text = new TextDecoder("utf-8", {
+      fatal: true,
+      ignoreBOM: true,
+    }).decode(body);
+  } catch {
     return null;
   }
 
   try {
-    return await response.json();
+    return JSON.parse(text) as unknown;
   } catch {
     return null;
   }
 }
 
-function validateAssistantRequest(
-  request: AssistantRequest,
-): AssistantRequest {
-  const message =
-    request.message.trim();
-
+function validateHistoryMessage(
+  value: AssistantHistoryMessage,
+): AssistantHistoryMessage {
   if (
-    message.length === 0
+    (value.role !== "user" && value.role !== "assistant")
+    || typeof value.content !== "string"
   ) {
     throw new AssistantServiceError(
-      "El mensaje no puede estar vacío.",
-      "EMPTY_MESSAGE",
+      "El historial del asistente no es válido.",
+      "INVALID_REQUEST",
     );
   }
 
+  const content = value.content.trim();
+
   if (
-    message.length
-    > ASSISTANT_CONFIG.maxMessageLength
+    content.length === 0
+    || content.length > ASSISTANT_CONFIG.maxHistoryMessageLength
+    || hasForbiddenControlCharacters(content)
   ) {
     throw new AssistantServiceError(
-      "El mensaje supera el límite permitido.",
-      "MESSAGE_TOO_LONG",
+      "El historial del asistente no es válido.",
+      "INVALID_REQUEST",
     );
   }
 
   return {
-    ...request,
+    role: value.role,
+    content,
+  };
+}
 
+function validateAssistantRequest(
+  request: AssistantRequest,
+): AssistantRequest {
+  if (
+    !isAssistantLocale(request.locale)
+    || typeof request.message !== "string"
+  ) {
+    throw new AssistantServiceError(
+      "La solicitud del asistente no es válida.",
+      "INVALID_REQUEST",
+    );
+  }
+
+  const message = request.message.trim();
+
+  if (message.length === 0) {
+    throw new AssistantServiceError(
+      request.locale === "es"
+        ? "El mensaje no puede estar vacío."
+        : "The message cannot be empty.",
+      "EMPTY_MESSAGE",
+    );
+  }
+
+  if (message.length > ASSISTANT_CONFIG.maxMessageLength) {
+    throw new AssistantServiceError(
+      request.locale === "es"
+        ? "El mensaje supera el límite permitido."
+        : "The message exceeds the allowed limit.",
+      "MESSAGE_TOO_LONG",
+    );
+  }
+
+  const history = request.history
+    ?.slice(-ASSISTANT_CONFIG.maxHistoryMessages)
+    .map(validateHistoryMessage);
+
+  return {
     message,
+    locale: request.locale,
+    ...(history && history.length > 0 ? { history } : {}),
+  };
+}
 
-    history:
-      request.history?.slice(
-        -ASSISTANT_CONFIG
-          .maxHistoryMessages,
-      ),
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
+}
+
+type RequestAbortControl = {
+  signal: AbortSignal;
+  didTimeout: () => boolean;
+  cleanup: () => void;
+};
+
+function createRequestAbortControl(
+  externalSignal?: AbortSignal,
+): RequestAbortControl {
+  const controller = new AbortController();
+  let timedOut = false;
+
+  const abortFromExternalSignal = (): void => {
+    controller.abort(externalSignal?.reason);
+  };
+
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      controller.abort(externalSignal.reason);
+    } else {
+      externalSignal.addEventListener(
+        "abort",
+        abortFromExternalSignal,
+        { once: true },
+      );
+    }
+  }
+
+  const timeoutIdentifier = globalThis.setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, ASSISTANT_REQUEST_TIMEOUT_MILLISECONDS);
+
+  return {
+    signal: controller.signal,
+    didTimeout: () => timedOut,
+    cleanup: () => {
+      globalThis.clearTimeout(timeoutIdentifier);
+      externalSignal?.removeEventListener(
+        "abort",
+        abortFromExternalSignal,
+      );
+    },
   };
 }
 
@@ -363,99 +585,124 @@ export async function requestAssistantResponse(
   request: AssistantRequest,
   signal?: AbortSignal,
 ): Promise<AssistantResponse> {
-  const validatedRequest =
-    validateAssistantRequest(
-      request,
-    );
-
-  let response:
-    Response;
+  const validatedRequest = validateAssistantRequest(request);
+  const abortControl = createRequestAbortControl(signal);
 
   try {
-    response =
-      await fetch(
+    let response: Response;
+
+    try {
+      response = await fetch(
         ASSISTANT_CONFIG.apiEndpoint,
         {
-          method:
-            "POST",
-
+          method: "POST",
           headers: {
-            "Content-Type":
-              "application/json",
-
-            Accept:
-              "application/json",
+            "Content-Type": "application/json",
+            Accept: "application/json",
           },
-
-          body:
-            JSON.stringify(
-              validatedRequest,
-            ),
-
-          signal,
+          body: JSON.stringify(validatedRequest),
+          signal: abortControl.signal,
+          credentials: "same-origin",
+          cache: "no-store",
+          mode: "same-origin",
+          redirect: "error",
+          referrerPolicy: "same-origin",
         },
       );
-  } catch (error) {
-    if (
-      error instanceof DOMException
-      && error.name === "AbortError"
-    ) {
-      throw error;
+    } catch (error) {
+      if (signal?.aborted) {
+        throw error;
+      }
+
+      if (abortControl.didTimeout()) {
+        throw new AssistantServiceError(
+          request.locale === "es"
+            ? "El asistente tardó demasiado en responder. Inténtalo nuevamente."
+            : "The assistant took too long to respond. Please try again.",
+          "NETWORK_ERROR",
+        );
+      }
+
+      if (isAbortError(error)) {
+        throw error;
+      }
+
+      throw new AssistantServiceError(
+        request.locale === "es"
+          ? "No se pudo conectar con el asistente."
+          : "Unable to connect to the assistant.",
+        "NETWORK_ERROR",
+      );
     }
 
-    throw new AssistantServiceError(
-      request.locale === "es"
-        ? "No se pudo conectar con el asistente."
-        : "Unable to connect to the assistant.",
+    let responseBody: unknown;
 
-      "NETWORK_ERROR",
-    );
-  }
+    try {
+      responseBody = await parseResponseBody(
+        response,
+        request.locale,
+      );
+    } catch (error) {
+      if (error instanceof AssistantServiceError) {
+        throw error;
+      }
 
-  const responseBody =
-    await parseResponseBody(
-      response,
-    );
+      if (signal?.aborted) {
+        throw error;
+      }
 
-  if (
-    !response.ok
-  ) {
-    if (
-      isAssistantErrorResponse(
-        responseBody,
-      )
-    ) {
+      if (abortControl.didTimeout()) {
+        throw new AssistantServiceError(
+          request.locale === "es"
+            ? "El asistente tardó demasiado en responder. Inténtalo nuevamente."
+            : "The assistant took too long to respond. Please try again.",
+          "NETWORK_ERROR",
+        );
+      }
+
+      if (isAbortError(error)) {
+        throw error;
+      }
+
       throw new AssistantServiceError(
-        responseBody.error,
-        responseBody.code,
+        request.locale === "es"
+          ? "No se pudo leer la respuesta del asistente."
+          : "The assistant response could not be read.",
+        "NETWORK_ERROR",
         response.status,
       );
     }
 
-    throw new AssistantServiceError(
-      request.locale === "es"
-        ? DEFAULT_ERROR_MESSAGE
-        : "The assistant request could not be processed.",
+    if (!response.ok) {
+      if (isAssistantErrorResponse(responseBody)) {
+        throw new AssistantServiceError(
+          responseBody.error,
+          responseBody.code,
+          response.status,
+        );
+      }
 
-      "INTERNAL_ERROR",
-      response.status,
-    );
+      throw new AssistantServiceError(
+        request.locale === "es"
+          ? DEFAULT_ERROR_MESSAGE
+          : "The assistant request could not be processed.",
+        "INTERNAL_ERROR",
+        response.status,
+      );
+    }
+
+    if (!isAssistantResponse(responseBody)) {
+      throw new AssistantServiceError(
+        request.locale === "es"
+          ? "El asistente devolvió una respuesta inválida."
+          : "The assistant returned an invalid response.",
+        "INTERNAL_ERROR",
+        response.status,
+      );
+    }
+
+    return responseBody;
+  } finally {
+    abortControl.cleanup();
   }
-
-  if (
-    !isAssistantResponse(
-      responseBody,
-    )
-  ) {
-    throw new AssistantServiceError(
-      request.locale === "es"
-        ? "El asistente devolvió una respuesta inválida."
-        : "The assistant returned an invalid response.",
-
-      "INTERNAL_ERROR",
-      response.status,
-    );
-  }
-
-  return responseBody;
 }

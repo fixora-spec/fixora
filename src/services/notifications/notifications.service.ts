@@ -63,28 +63,15 @@ export class NotificationsApiError
   ) {
     super(input.message);
 
-    this.name =
-      "NotificationsApiError";
-
-    this.code =
-      input.code;
-
-    this.status =
-      input.status;
-
-    this.retryAfterSeconds =
-      input.retryAfterSeconds
-      ?? null;
+    this.name = "NotificationsApiError";
+    this.code = input.code;
+    this.status = input.status;
+    this.retryAfterSeconds = input.retryAfterSeconds ?? null;
   }
 }
 
 type UnknownRecord =
   Record<string, unknown>;
-
-type ApiSuccessResponse<TData> = {
-  success: true;
-  data: TData;
-};
 
 type ApiErrorResponse = {
   success: false;
@@ -93,31 +80,44 @@ type ApiErrorResponse = {
     code: string;
     message: string;
 
-    retryAfterSeconds?:
-      number;
+    retryAfterSeconds?: number;
   };
 };
+
+const REQUEST_TIMEOUT_MILLISECONDS = 30_000;
+const MAXIMUM_RESPONSE_BODY_BYTES = 256 * 1_024;
+const MAXIMUM_NOTIFICATION_ITEMS = 100;
+const MAXIMUM_NOTIFICATION_TEXT_LENGTH = 4_000;
+const MAXIMUM_METADATA_DEPTH = 8;
+const MAXIMUM_METADATA_PROPERTIES = 100;
+const MAXIMUM_METADATA_ARRAY_ITEMS = 100;
+
+const NOTIFICATION_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+
+const FORBIDDEN_CONTROL_CHARACTER_PATTERN =
+  /[\u0000-\u001F\u007F]/u;
+
+const FORBIDDEN_METADATA_KEYS = new Set([
+  "__proto__",
+  "prototype",
+  "constructor",
+]);
 
 function isUnknownRecord(
   value: unknown,
 ): value is UnknownRecord {
-  return (
-    typeof value === "object"
-    && value !== null
-    && !Array.isArray(value)
-  );
-}
+  if (
+    typeof value !== "object"
+    || value === null
+    || Array.isArray(value)
+  ) {
+    return false;
+  }
 
-function isApiSuccessResponse<
-  TData,
->(
-  value: unknown,
-): value is ApiSuccessResponse<TData> {
-  return (
-    isUnknownRecord(value)
-    && value.success === true
-    && "data" in value
-  );
+  const prototype = Object.getPrototypeOf(value);
+
+  return prototype === Object.prototype || prototype === null;
 }
 
 function isApiErrorResponse(
@@ -126,15 +126,9 @@ function isApiErrorResponse(
   return (
     isUnknownRecord(value)
     && value.success === false
-    && isUnknownRecord(
-      value.error,
-    )
-    && typeof value
-      .error
-      .code === "string"
-    && typeof value
-      .error
-      .message === "string"
+    && isUnknownRecord(value.error)
+    && typeof value.error.code === "string"
+    && typeof value.error.message === "string"
   );
 }
 
@@ -144,9 +138,7 @@ function validatePaginationValue(
   minimum: number,
   maximum: number,
 ): number | undefined {
-  if (
-    typeof value === "undefined"
-  ) {
+  if (typeof value === "undefined") {
     return undefined;
   }
 
@@ -166,14 +158,9 @@ function validatePaginationValue(
 function validateNotificationId(
   notificationId: string,
 ): string {
-  const normalizedId =
-    notificationId.trim();
+  const normalizedId = notificationId.trim().toLowerCase();
 
-  if (
-    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
-      normalizedId,
-    )
-  ) {
+  if (!NOTIFICATION_ID_PATTERN.test(normalizedId)) {
     throw new Error(
       "El identificador de la notificación no es válido.",
     );
@@ -182,65 +169,197 @@ function validateNotificationId(
   return normalizedId;
 }
 
+function normalizeRequiredString(
+  value: unknown,
+  fieldName: string,
+  maximumLength: number,
+): string {
+  if (typeof value !== "string") {
+    throw new Error(
+      `${fieldName} no contiene texto válido.`,
+    );
+  }
+
+  const normalizedValue = value.trim().normalize("NFC");
+
+  if (
+    normalizedValue.length === 0
+    || normalizedValue.length > maximumLength
+    || FORBIDDEN_CONTROL_CHARACTER_PATTERN.test(normalizedValue)
+  ) {
+    throw new Error(
+      `${fieldName} no contiene texto válido.`,
+    );
+  }
+
+  return normalizedValue;
+}
+
+function readFirstValidString(
+  record: UnknownRecord,
+  propertyNames: readonly string[],
+  fieldName: string,
+  maximumLength: number,
+): string {
+  for (const propertyName of propertyNames) {
+    const value = record[propertyName];
+
+    if (typeof value !== "string" || value.trim().length === 0) {
+      continue;
+    }
+
+    return normalizeRequiredString(
+      value,
+      fieldName,
+      maximumLength,
+    );
+  }
+
+  throw new Error(
+    `${fieldName} no contiene texto válido.`,
+  );
+}
+
 function normalizeIsoDate(
   value: unknown,
   fieldName: string,
 ): string {
   if (
     typeof value !== "string"
+    || value.length < 20
+    || value.length > 35
   ) {
     throw new Error(
       `${fieldName} no contiene una fecha válida.`,
     );
   }
 
-  const parsedDate =
-    new Date(value);
+  const parsedTime = Date.parse(value);
 
-  if (
-    Number.isNaN(
-      parsedDate.getTime(),
-    )
-  ) {
+  if (!Number.isFinite(parsedTime)) {
     throw new Error(
       `${fieldName} no contiene una fecha válida.`,
     );
   }
 
-  return parsedDate.toISOString();
+  return new Date(parsedTime).toISOString();
 }
 
 function normalizeNullableIsoDate(
   value: unknown,
 ): string | null {
-  if (
-    value === null
-    || typeof value === "undefined"
-  ) {
+  if (value === null || typeof value === "undefined") {
     return null;
   }
 
-  return normalizeIsoDate(
-    value,
-    "readAt",
-  );
+  return normalizeIsoDate(value, "readAt");
+}
+
+function normalizeMetadataValue(
+  value: unknown,
+  depth: number,
+): unknown {
+  if (depth > MAXIMUM_METADATA_DEPTH) {
+    throw new Error(
+      "Los metadatos de la notificación superan la profundidad permitida.",
+    );
+  }
+
+  if (
+    value === null
+    || typeof value === "boolean"
+  ) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    if (
+      value.length > MAXIMUM_NOTIFICATION_TEXT_LENGTH
+      || FORBIDDEN_CONTROL_CHARACTER_PATTERN.test(value)
+    ) {
+      throw new Error(
+        "Los metadatos de la notificación contienen texto no válido.",
+      );
+    }
+
+    return value;
+  }
+
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      throw new Error(
+        "Los metadatos de la notificación contienen un número no válido.",
+      );
+    }
+
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    if (value.length > MAXIMUM_METADATA_ARRAY_ITEMS) {
+      throw new Error(
+        "Los metadatos de la notificación contienen demasiados elementos.",
+      );
+    }
+
+    return value.map((item) =>
+      normalizeMetadataValue(item, depth + 1),
+    );
+  }
+
+  if (!isUnknownRecord(value)) {
+    throw new Error(
+      "Los metadatos de la notificación no son válidos.",
+    );
+  }
+
+  const entries = Object.entries(value);
+
+  if (entries.length > MAXIMUM_METADATA_PROPERTIES) {
+    throw new Error(
+      "Los metadatos de la notificación contienen demasiadas propiedades.",
+    );
+  }
+
+  const normalizedObject: Record<string, unknown> = Object.create(null);
+
+  for (const [key, entryValue] of entries) {
+    if (
+      key.length === 0
+      || key.length > 128
+      || FORBIDDEN_CONTROL_CHARACTER_PATTERN.test(key)
+      || FORBIDDEN_METADATA_KEYS.has(key)
+    ) {
+      throw new Error(
+        "Los metadatos de la notificación contienen una propiedad no válida.",
+      );
+    }
+
+    normalizedObject[key] = normalizeMetadataValue(
+      entryValue,
+      depth + 1,
+    );
+  }
+
+  return normalizedObject;
 }
 
 function normalizeMetadata(
   value: unknown,
 ): Record<string, unknown> | null {
-  if (
-    value === null
-    || typeof value === "undefined"
-  ) {
+  if (value === null || typeof value === "undefined") {
     return null;
   }
 
-  if (!isUnknownRecord(value)) {
-    return null;
+  const normalizedValue = normalizeMetadataValue(value, 0);
+
+  if (!isUnknownRecord(normalizedValue)) {
+    throw new Error(
+      "Los metadatos de la notificación no son válidos.",
+    );
   }
 
-  return value;
+  return normalizedValue;
 }
 
 function normalizeNotification(
@@ -252,66 +371,58 @@ function normalizeNotification(
     );
   }
 
-  const notificationId =
-    typeof value.notificationId
-      === "string"
-      ? validateNotificationId(
-          value.notificationId,
-        )
-      : "";
+  const notificationId = validateNotificationId(
+    normalizeRequiredString(
+      value.notificationId,
+      "notificationId",
+      36,
+    ),
+  );
 
-  const type =
-    typeof value.type === "string"
-      ? value.type.trim()
-      : "";
+  const type = normalizeRequiredString(
+    value.type,
+    "type",
+    80,
+  );
 
-  const title =
-    typeof value.title === "string"
-      ? value.title.trim()
-      : "";
+  const title = readFirstValidString(
+    value,
+    ["title", "titleKey"],
+    "title",
+    200,
+  );
 
-  const message =
-    typeof value.message === "string"
-      ? value.message.trim()
-      : "";
+  const message = readFirstValidString(
+    value,
+    ["message", "messageKey"],
+    "message",
+    200,
+  );
+
+  const createdAt = normalizeIsoDate(
+    value.createdAt,
+    "createdAt",
+  );
+
+  const readAt = normalizeNullableIsoDate(value.readAt);
 
   if (
-    notificationId.length === 0
-    || type.length === 0
-    || title.length === 0
-    || message.length === 0
+    readAt !== null
+    && Date.parse(readAt) < Date.parse(createdAt)
   ) {
     throw new Error(
-      "La notificación recibida está incompleta.",
+      "La fecha de lectura de la notificación no es válida.",
     );
   }
-
-  const readAt =
-    normalizeNullableIsoDate(
-      value.readAt,
-    );
 
   return {
     notificationId,
     type,
     title,
     message,
-
-    metadata:
-      normalizeMetadata(
-        value.metadata,
-      ),
-
-    isRead:
-      value.isRead === true
-      || readAt !== null,
-
-    createdAt:
-      normalizeIsoDate(
-        value.createdAt,
-        "createdAt",
-      ),
-
+    metadata: normalizeMetadata(value.metadata),
+    isRead: value.isRead === true || readAt !== null,
+    createdAt,
     readAt,
   };
 }
@@ -324,7 +435,9 @@ function normalizeUnreadCount(
     || !Number.isSafeInteger(value)
     || value < 0
   ) {
-    return 0;
+    throw new Error(
+      "El contador de notificaciones no es válido.",
+    );
   }
 
   return value;
@@ -333,74 +446,41 @@ function normalizeUnreadCount(
 function normalizeNotificationListData(
   value: unknown,
 ): NotificationListResponseData {
-  if (!isUnknownRecord(value)) {
+  if (!isUnknownRecord(value) || !Array.isArray(value.notifications)) {
     throw new Error(
       "La respuesta de notificaciones no es válida.",
     );
   }
 
-  const rawNotifications =
-    Array.isArray(
-      value.notifications,
-    )
-      ? value.notifications
-      : [];
-
-  const notifications:
-    NotificationServiceItem[] = [];
-
-  const knownNotificationIds =
-    new Set<string>();
-
-  for (
-    const rawNotification
-    of rawNotifications
-  ) {
-    const notification =
-      normalizeNotification(
-        rawNotification,
-      );
-
-    if (
-      knownNotificationIds.has(
-        notification.notificationId,
-      )
-    ) {
-      continue;
-    }
-
-    knownNotificationIds.add(
-      notification.notificationId,
-    );
-
-    notifications.push(
-      notification,
+  if (value.notifications.length > MAXIMUM_NOTIFICATION_ITEMS) {
+    throw new Error(
+      "La respuesta contiene demasiadas notificaciones.",
     );
   }
 
+  const notifications: NotificationServiceItem[] = [];
+  const knownNotificationIds = new Set<string>();
+
+  for (const rawNotification of value.notifications) {
+    const notification = normalizeNotification(rawNotification);
+
+    if (knownNotificationIds.has(notification.notificationId)) {
+      continue;
+    }
+
+    knownNotificationIds.add(notification.notificationId);
+    notifications.push(notification);
+  }
+
   notifications.sort(
-    (
-      firstNotification,
-      secondNotification,
-    ) => {
-      return (
-        new Date(
-          secondNotification.createdAt,
-        ).getTime()
-        - new Date(
-          firstNotification.createdAt,
-        ).getTime()
-      );
-    },
+    (firstNotification, secondNotification) =>
+      Date.parse(secondNotification.createdAt)
+      - Date.parse(firstNotification.createdAt),
   );
 
   return {
     notifications,
-
-    unreadCount:
-      normalizeUnreadCount(
-        value.unreadCount,
-      ),
+    unreadCount: normalizeUnreadCount(value.unreadCount),
   };
 }
 
@@ -414,16 +494,116 @@ function normalizeNotificationReadData(
   }
 
   return {
-    notification:
-      normalizeNotification(
-        value.notification,
-      ),
-
-    unreadCount:
-      normalizeUnreadCount(
-        value.unreadCount,
-      ),
+    notification: normalizeNotification(value.notification),
+    unreadCount: normalizeUnreadCount(value.unreadCount),
   };
+}
+
+function readRetryAfterSeconds(
+  response: Response,
+  payload: ApiErrorResponse | null,
+): number | null {
+  const payloadValue = payload?.error.retryAfterSeconds;
+
+  if (
+    typeof payloadValue === "number"
+    && Number.isSafeInteger(payloadValue)
+    && payloadValue >= 1
+    && payloadValue <= 86_400
+  ) {
+    return payloadValue;
+  }
+
+  const headerValue = response.headers.get("retry-after")?.trim();
+
+  if (!headerValue || !/^\d+$/u.test(headerValue)) {
+    return null;
+  }
+
+  const parsedValue = Number.parseInt(headerValue, 10);
+
+  return (
+    Number.isSafeInteger(parsedValue)
+    && parsedValue >= 1
+    && parsedValue <= 86_400
+  )
+    ? parsedValue
+    : null;
+}
+
+function isAbortError(
+  error: unknown,
+): boolean {
+  return (
+    error instanceof Error
+    && error.name === "AbortError"
+  );
+}
+
+async function readResponseTextWithLimit(
+  response: Response,
+): Promise<string> {
+  const contentLengthHeader = response.headers
+    .get("content-length")
+    ?.trim();
+
+  if (contentLengthHeader && /^\d+$/u.test(contentLengthHeader)) {
+    const contentLength = Number.parseInt(contentLengthHeader, 10);
+
+    if (contentLength > MAXIMUM_RESPONSE_BODY_BYTES) {
+      throw new NotificationsApiError({
+        code: "RESPONSE_TOO_LARGE",
+        message: "El servidor devolvió una respuesta demasiado grande.",
+        status: response.status,
+      });
+    }
+  }
+
+  if (!response.body) {
+    return "";
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let receivedBytes = 0;
+
+  try {
+    while (true) {
+      const result = await reader.read();
+
+      if (result.done) {
+        break;
+      }
+
+      receivedBytes += result.value.byteLength;
+
+      if (receivedBytes > MAXIMUM_RESPONSE_BODY_BYTES) {
+        await reader.cancel();
+
+        throw new NotificationsApiError({
+          code: "RESPONSE_TOO_LARGE",
+          message: "El servidor devolvió una respuesta demasiado grande.",
+          status: response.status,
+        });
+      }
+
+      chunks.push(result.value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const bodyBuffer = new Uint8Array(receivedBytes);
+  let offset = 0;
+
+  for (const chunk of chunks) {
+    bodyBuffer.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+
+  return new TextDecoder("utf-8", {
+    fatal: true,
+  }).decode(bodyBuffer);
 }
 
 async function parseResponseBody(
@@ -433,24 +613,33 @@ async function parseResponseBody(
     return null;
   }
 
-  const contentType =
-    response.headers
-      .get("content-type")
-      ?.toLowerCase()
+  const contentType = response.headers
+    .get("content-type")
+    ?.toLowerCase()
     ?? "";
 
-  if (
-    !contentType.includes(
-      "application/json",
-    )
-  ) {
+  if (!contentType.includes("application/json")) {
+    return null;
+  }
+
+  let responseText: string;
+
+  try {
+    responseText = await readResponseTextWithLimit(response);
+  } catch (error) {
+    if (isNotificationsApiError(error)) {
+      throw error;
+    }
+
+    return null;
+  }
+
+  if (!responseText.trim()) {
     return null;
   }
 
   try {
-    return (
-      await response.json()
-    ) as unknown;
+    return JSON.parse(responseText) as unknown;
   } catch {
     return null;
   }
@@ -461,247 +650,241 @@ function createNotificationsApiError(
   payload: unknown,
 ): NotificationsApiError {
   if (isApiErrorResponse(payload)) {
+    const code = normalizeRequiredString(
+      payload.error.code,
+      "error.code",
+      100,
+    );
+    const message = normalizeRequiredString(
+      payload.error.message,
+      "error.message",
+      1_000,
+    );
+
     return new NotificationsApiError({
-      code:
-        payload.error.code,
-
-      message:
-        payload.error.message,
-
-      status:
-        response.status,
-
-      retryAfterSeconds:
-        typeof payload.error
-          .retryAfterSeconds
-          === "number"
-          ? payload.error
-              .retryAfterSeconds
-          : null,
+      code,
+      message,
+      status: response.status,
+      retryAfterSeconds: readRetryAfterSeconds(response, payload),
     });
   }
 
   return new NotificationsApiError({
-    code:
-      "UNKNOWN_ERROR",
-
-    message:
-      response.status >= 500
-        ? "El servidor no pudo completar la solicitud."
-        : "No se pudo completar la solicitud.",
-
-    status:
-      response.status,
+    code: "UNKNOWN_ERROR",
+    message: response.status >= 500
+      ? "El servidor no pudo completar la solicitud."
+      : "No se pudo completar la solicitud.",
+    status: response.status,
+    retryAfterSeconds: readRetryAfterSeconds(response, null),
   });
 }
 
-function isAbortError(
-  error: unknown,
-): boolean {
-  return (
-    error instanceof DOMException
-    && error.name === "AbortError"
-  );
+function validateNotificationsApiUrl(
+  value: string,
+): string {
+  if (
+    !value.startsWith("/api/notifications")
+    || value.startsWith("//")
+    || /[\r\n\0]/u.test(value)
+  ) {
+    throw new Error(
+      "La ruta de notificaciones no es válida.",
+    );
+  }
+
+  return value;
 }
 
-async function requestNotificationsApi<
-  TData,
->(
+function createRequestHeaders(
+  initialHeaders?: HeadersInit,
+): Headers {
+  const headers = new Headers(initialHeaders);
+
+  headers.set("Accept", "application/json");
+  headers.set("X-Fixora-Client", "web");
+
+  return headers;
+}
+
+async function requestNotificationsApi<TData>(
   url: string,
   init: RequestInit,
+  normalizeData: (value: unknown) => TData,
 ): Promise<TData> {
-  let response:
-    Response;
+  const requestUrl = validateNotificationsApiUrl(url);
+  const abortController = new AbortController();
+  const externalSignal = init.signal;
+  let timedOut = false;
 
-  try {
-    response =
-      await fetch(
-        url,
+  const abortFromExternalSignal = (): void => {
+    abortController.abort(externalSignal?.reason);
+  };
+
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      abortController.abort(externalSignal.reason);
+    } else {
+      externalSignal.addEventListener(
+        "abort",
+        abortFromExternalSignal,
         {
-          ...init,
-
-          headers: {
-            Accept:
-              "application/json",
-
-            ...init.headers,
-          },
-
-          cache:
-            "no-store",
-
-          credentials:
-            "same-origin",
+          once: true,
         },
       );
+    }
+  }
+
+  const timeoutIdentifier = globalThis.setTimeout(() => {
+    timedOut = true;
+    abortController.abort();
+  }, REQUEST_TIMEOUT_MILLISECONDS);
+
+  try {
+    const response = await fetch(requestUrl, {
+      ...init,
+      headers: createRequestHeaders(init.headers),
+      cache: "no-store",
+      credentials: "same-origin",
+      mode: "same-origin",
+      redirect: "error",
+      referrerPolicy: "same-origin",
+      signal: abortController.signal,
+    });
+
+    const payload = await parseResponseBody(response);
+
+    if (!response.ok) {
+      throw createNotificationsApiError(response, payload);
+    }
+
+    if (
+      !isUnknownRecord(payload)
+      || payload.success !== true
+      || !("data" in payload)
+    ) {
+      throw new NotificationsApiError({
+        code: "INVALID_RESPONSE",
+        message: "El servidor devolvió una respuesta no válida.",
+        status: response.status,
+      });
+    }
+
+    try {
+      return normalizeData(payload.data);
+    } catch {
+      throw new NotificationsApiError({
+        code: "INVALID_RESPONSE",
+        message: "El servidor devolvió datos de notificaciones no válidos.",
+        status: response.status,
+      });
+    }
   } catch (error) {
+    if (isNotificationsApiError(error)) {
+      throw error;
+    }
+
+    if (externalSignal?.aborted) {
+      throw error;
+    }
+
+    if (timedOut) {
+      throw new NotificationsApiError({
+        code: "REQUEST_TIMEOUT",
+        message: "La solicitud tardó demasiado tiempo en responder.",
+        status: 0,
+      });
+    }
+
     if (isAbortError(error)) {
       throw error;
     }
 
     throw new NotificationsApiError({
-      code:
-        "NETWORK_ERROR",
-
-      message:
-        "No se pudo establecer comunicación con el servidor.",
-
-      status:
-        0,
+      code: "NETWORK_ERROR",
+      message: "No se pudo establecer comunicación con el servidor.",
+      status: 0,
     });
-  }
-
-  const payload =
-    await parseResponseBody(
-      response,
-    );
-
-  if (!response.ok) {
-    throw createNotificationsApiError(
-      response,
-      payload,
+  } finally {
+    globalThis.clearTimeout(timeoutIdentifier);
+    externalSignal?.removeEventListener(
+      "abort",
+      abortFromExternalSignal,
     );
   }
-
-  if (
-    !isApiSuccessResponse<
-      TData
-    >(payload)
-  ) {
-    throw new NotificationsApiError({
-      code:
-        "INVALID_RESPONSE",
-
-      message:
-        "El servidor devolvió una respuesta no válida.",
-
-      status:
-        response.status,
-    });
-  }
-
-  return payload.data;
 }
 
 export async function listNotifications(
-  options:
-    ListNotificationsOptions = {},
+  options: ListNotificationsOptions = {},
 ): Promise<NotificationListResponseData> {
-  const limit =
-    validatePaginationValue(
-      options.limit,
-      "limit",
-      1,
-      100,
-    );
+  const limit = validatePaginationValue(
+    options.limit,
+    "limit",
+    1,
+    100,
+  );
 
-  const offset =
-    validatePaginationValue(
-      options.offset,
-      "offset",
-      0,
-      10_000,
-    );
+  const offset = validatePaginationValue(
+    options.offset,
+    "offset",
+    0,
+    10_000,
+  );
 
-  const searchParameters =
-    new URLSearchParams();
+  const searchParameters = new URLSearchParams();
 
-  if (
-    typeof limit === "number"
-  ) {
-    searchParameters.set(
-      "limit",
-      String(limit),
-    );
+  if (typeof limit === "number") {
+    searchParameters.set("limit", String(limit));
   }
 
-  if (
-    typeof offset === "number"
-  ) {
-    searchParameters.set(
-      "offset",
-      String(offset),
-    );
+  if (typeof offset === "number") {
+    searchParameters.set("offset", String(offset));
   }
 
-  if (options.unreadOnly) {
-    searchParameters.set(
-      "unreadOnly",
-      "true",
-    );
+  if (options.unreadOnly === true) {
+    searchParameters.set("unreadOnly", "true");
   }
 
-  const queryString =
-    searchParameters.toString();
+  const queryString = searchParameters.toString();
 
-  const responseData =
-    await requestNotificationsApi<
-      unknown
-    >(
-      queryString
-        ? `/api/notifications?${queryString}`
-        : "/api/notifications",
-      {
-        method:
-          "GET",
-
-        signal:
-          options.signal,
-      },
-    );
-
-  return normalizeNotificationListData(
-    responseData,
+  return requestNotificationsApi(
+    queryString
+      ? `/api/notifications?${queryString}`
+      : "/api/notifications",
+    {
+      method: "GET",
+      signal: options.signal,
+    },
+    normalizeNotificationListData,
   );
 }
 
 export async function markNotificationAsRead(
   notificationId: string,
-  options:
-    NotificationsRequestOptions = {},
+  options: NotificationsRequestOptions = {},
 ): Promise<NotificationReadResponseData> {
-  const normalizedNotificationId =
-    validateNotificationId(
-      notificationId,
-    );
+  const normalizedNotificationId = validateNotificationId(notificationId);
 
-  const responseData =
-    await requestNotificationsApi<
-      unknown
-    >(
-      `/api/notifications/${encodeURIComponent(normalizedNotificationId)}/read`,
-      {
-        method:
-          "POST",
-
-        headers: {
-          "Content-Type":
-            "application/json",
-        },
-
-        body:
-          JSON.stringify({}),
-
-        signal:
-          options.signal,
+  return requestNotificationsApi(
+    `/api/notifications/${encodeURIComponent(normalizedNotificationId)}/read`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json; charset=utf-8",
       },
-    );
-
-  return normalizeNotificationReadData(
-    responseData,
+      body: JSON.stringify({}),
+      signal: options.signal,
+    },
+    normalizeNotificationReadData,
   );
 }
 
 export function isNotificationsApiError(
   error: unknown,
 ): error is NotificationsApiError {
-  return (
-    error
-    instanceof NotificationsApiError
-  );
+  return error instanceof NotificationsApiError;
 }
 
-export const notificationsService = {
+export const notificationsService = Object.freeze({
   listNotifications,
   markNotificationAsRead,
-} as const;
+});

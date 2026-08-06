@@ -7,13 +7,9 @@ import {
   Transaction,
 } from "mssql";
 
-import type {
-  config as MssqlConfiguration,
-} from "mssql";
+import type { config as MssqlConfiguration } from "mssql";
 
-import {
-  getSqlServerConfiguration,
-} from "@/config/database.config";
+import { getSqlServerConfiguration } from "@/config/database.config";
 
 import type {
   DatabaseConnectionState,
@@ -28,37 +24,20 @@ import type {
   SqlServerConfiguration,
 } from "@/types/database";
 
-let connectionPoolPromise:
-  | Promise<ConnectionPool>
-  | null = null;
-
-let connectionState:
-  DatabaseConnectionState = "DISCONNECTED";
+const MAXIMUM_QUERY_TEXT_LENGTH = 1_048_576;
 
 const ISOLATION_LEVEL_MAP: Record<
   DatabaseTransactionIsolationLevel,
   number
 > = {
-  READ_UNCOMMITTED:
-    ISOLATION_LEVEL.READ_UNCOMMITTED,
-
-  READ_COMMITTED:
-    ISOLATION_LEVEL.READ_COMMITTED,
-
-  REPEATABLE_READ:
-    ISOLATION_LEVEL.REPEATABLE_READ,
-
-  SERIALIZABLE:
-    ISOLATION_LEVEL.SERIALIZABLE,
-
-  SNAPSHOT:
-    ISOLATION_LEVEL.SNAPSHOT,
+  READ_UNCOMMITTED: ISOLATION_LEVEL.READ_UNCOMMITTED,
+  READ_COMMITTED: ISOLATION_LEVEL.READ_COMMITTED,
+  REPEATABLE_READ: ISOLATION_LEVEL.REPEATABLE_READ,
+  SERIALIZABLE: ISOLATION_LEVEL.SERIALIZABLE,
+  SNAPSHOT: ISOLATION_LEVEL.SNAPSHOT,
 };
 
-type ErrorRecord = Record<
-  string,
-  unknown
->;
+type ErrorRecord = Record<string, unknown>;
 
 type SqlHealthRecord = {
   server_name: string | null;
@@ -68,12 +47,33 @@ type SqlHealthRecord = {
   product_version: string | null;
 };
 
-export class DatabaseError extends Error {
-  public readonly details:
-    DatabaseErrorDetails;
+type SqlServerRuntimeState = {
+  connectionPoolPromise: Promise<ConnectionPool> | null;
+  connectionPool: ConnectionPool | null;
+  closePromise: Promise<void> | null;
+  connectionState: DatabaseConnectionState;
+};
 
-  public readonly originalError:
-    unknown;
+type GlobalSqlServerState = typeof globalThis & {
+  __fixoraSqlServerRuntimeState?: SqlServerRuntimeState;
+};
+
+const globalSqlServerState = globalThis as GlobalSqlServerState;
+
+const runtimeState: SqlServerRuntimeState =
+  globalSqlServerState.__fixoraSqlServerRuntimeState ?? {
+    connectionPoolPromise: null,
+    connectionPool: null,
+    closePromise: null,
+    connectionState: "DISCONNECTED",
+  };
+
+globalSqlServerState.__fixoraSqlServerRuntimeState = runtimeState;
+
+export class DatabaseError extends Error {
+  public readonly details: DatabaseErrorDetails;
+
+  public readonly originalError: unknown;
 
   public constructor(
     details: DatabaseErrorDetails,
@@ -87,13 +87,8 @@ export class DatabaseError extends Error {
   }
 }
 
-function isErrorRecord(
-  value: unknown,
-): value is ErrorRecord {
-  return (
-    typeof value === "object"
-    && value !== null
-  );
+function isErrorRecord(value: unknown): value is ErrorRecord {
+  return typeof value === "object" && value !== null;
 }
 
 function readErrorProperty(
@@ -107,120 +102,124 @@ function readErrorProperty(
   return error[propertyName];
 }
 
-function readOriginalErrorProperty(
+function readNestedErrorProperty(
   error: unknown,
+  nestedPropertyName: "cause" | "originalError",
   propertyName: string,
 ): unknown {
-  const originalError =
-    readErrorProperty(
-      error,
-      "originalError",
-    );
+  const nestedError = readErrorProperty(error, nestedPropertyName);
 
-  if (!isErrorRecord(originalError)) {
+  if (!isErrorRecord(nestedError)) {
     return undefined;
   }
 
-  return originalError[propertyName];
+  return nestedError[propertyName];
 }
 
-function getOriginalErrorCode(
+function readErrorPropertyRecursively(
   error: unknown,
-): string | undefined {
-  const directCode =
-    readErrorProperty(error, "code");
+  propertyName: string,
+): unknown {
+  const directValue = readErrorProperty(error, propertyName);
 
-  if (typeof directCode === "string") {
-    return directCode;
+  if (typeof directValue !== "undefined") {
+    return directValue;
   }
 
-  const nestedCode =
-    readOriginalErrorProperty(
-      error,
-      "code",
-    );
+  const originalErrorValue = readNestedErrorProperty(
+    error,
+    "originalError",
+    propertyName,
+  );
 
-  return typeof nestedCode === "string"
-    ? nestedCode
+  if (typeof originalErrorValue !== "undefined") {
+    return originalErrorValue;
+  }
+
+  return readNestedErrorProperty(error, "cause", propertyName);
+}
+
+function getOriginalErrorCode(error: unknown): string | undefined {
+  const code = readErrorPropertyRecursively(error, "code");
+
+  return typeof code === "string" ? code : undefined;
+}
+
+function getSqlErrorNumber(error: unknown): number | undefined {
+  const number = readErrorPropertyRecursively(error, "number");
+
+  return typeof number === "number" && Number.isSafeInteger(number)
+    ? number
     : undefined;
 }
 
-function getSqlErrorNumber(
-  error: unknown,
-): number | undefined {
-  const directNumber =
-    readErrorProperty(error, "number");
+function getSqlConstraintName(error: unknown): string | undefined {
+  const constraintName = readErrorPropertyRecursively(
+    error,
+    "constraint",
+  );
 
-  if (typeof directNumber === "number") {
-    return directNumber;
-  }
-
-  const nestedNumber =
-    readOriginalErrorProperty(
-      error,
-      "number",
-    );
-
-  return typeof nestedNumber === "number"
-    ? nestedNumber
-    : undefined;
-}
-
-function getSqlConstraintName(
-  error: unknown,
-): string | undefined {
-  const constraintName =
-    readErrorProperty(
-      error,
-      "constraint",
-    );
-
-  return typeof constraintName === "string"
+  return typeof constraintName === "string" && constraintName.length > 0
     ? constraintName
     : undefined;
 }
 
-function getErrorMessage(
-  error: unknown,
-): string {
+function getInternalErrorMessage(error: unknown): string {
   if (error instanceof Error) {
     return error.message;
   }
 
-  const message =
-    readErrorProperty(error, "message");
+  const message = readErrorPropertyRecursively(error, "message");
 
-  if (typeof message === "string") {
-    return message;
-  }
+  return typeof message === "string" ? message : "";
+}
 
-  return "Se produjo un error desconocido en SQL Server.";
+function isConfigurationError(
+  error: unknown,
+  fallbackCode: DatabaseErrorCode,
+): boolean {
+  return (
+    fallbackCode === "CONFIGURATION_MISSING" ||
+    fallbackCode === "INVALID_CONFIGURATION"
+  );
 }
 
 function resolveDatabaseErrorCode(
   error: unknown,
   fallbackCode: DatabaseErrorCode,
 ): DatabaseErrorCode {
-  const originalCode =
-    getOriginalErrorCode(error);
+  const originalCode = getOriginalErrorCode(error);
+  const sqlErrorNumber = getSqlErrorNumber(error);
+  const internalMessage = getInternalErrorMessage(error).toLowerCase();
 
-  const sqlErrorNumber =
-    getSqlErrorNumber(error);
-
-  if (
-    sqlErrorNumber === 2601
-    || sqlErrorNumber === 2627
-  ) {
+  if (sqlErrorNumber === 2601 || sqlErrorNumber === 2627) {
     return "UNIQUE_CONSTRAINT_VIOLATION";
   }
 
   if (sqlErrorNumber === 547) {
-    return "FOREIGN_KEY_VIOLATION";
+    return internalMessage.includes("foreign key")
+      ? "FOREIGN_KEY_VIOLATION"
+      : "CONSTRAINT_VIOLATION";
+  }
+
+  if (sqlErrorNumber === 515) {
+    return "CONSTRAINT_VIOLATION";
+  }
+
+  if (sqlErrorNumber === 1222) {
+    return "QUERY_TIMEOUT";
+  }
+
+  if (sqlErrorNumber === 1205) {
+    return fallbackCode === "TRANSACTION_FAILED"
+      ? "TRANSACTION_FAILED"
+      : "QUERY_FAILED";
   }
 
   switch (originalCode) {
     case "ETIMEOUT":
-      return fallbackCode === "QUERY_FAILED"
+      return fallbackCode === "QUERY_FAILED" ||
+        fallbackCode === "TRANSACTION_FAILED"
         ? "QUERY_TIMEOUT"
         : "CONNECTION_TIMEOUT";
 
@@ -231,61 +230,110 @@ function resolveDatabaseErrorCode(
       return "DATABASE_NOT_FOUND";
 
     case "ECONNCLOSED":
+    case "ECONNREFUSED":
+    case "EINSTLOOKUP":
+    case "ENOCONN":
     case "ENOTOPEN":
     case "ESOCKET":
       return "CONNECTION_FAILED";
 
     case "EREQUEST":
-      return "QUERY_FAILED";
+      return fallbackCode === "TRANSACTION_FAILED"
+        ? "TRANSACTION_FAILED"
+        : "QUERY_FAILED";
 
     default:
+      if (isConfigurationError(error, fallbackCode)) {
+        return fallbackCode;
+      }
+
       return fallbackCode;
+  }
+}
+
+function getPublicDatabaseErrorMessage(code: DatabaseErrorCode): string {
+  switch (code) {
+    case "CONFIGURATION_MISSING":
+      return "Falta configurar la conexión con SQL Server.";
+
+    case "INVALID_CONFIGURATION":
+      return "La configuración de SQL Server no es válida.";
+
+    case "CONNECTION_TIMEOUT":
+      return "La conexión con SQL Server excedió el tiempo permitido.";
+
+    case "CONNECTION_FAILED":
+      return "No fue posible establecer la conexión con SQL Server.";
+
+    case "AUTHENTICATION_FAILED":
+      return "SQL Server rechazó las credenciales configuradas.";
+
+    case "DATABASE_NOT_FOUND":
+      return "La base de datos configurada no está disponible.";
+
+    case "QUERY_TIMEOUT":
+      return "La operación de base de datos excedió el tiempo permitido.";
+
+    case "QUERY_FAILED":
+      return "No fue posible completar la operación de base de datos.";
+
+    case "TRANSACTION_FAILED":
+      return "No fue posible completar la transacción de base de datos.";
+
+    case "CONSTRAINT_VIOLATION":
+      return "La operación infringe una restricción de la base de datos.";
+
+    case "UNIQUE_CONSTRAINT_VIOLATION":
+      return "Ya existe un registro con los mismos datos únicos.";
+
+    case "FOREIGN_KEY_VIOLATION":
+      return "La operación hace referencia a un registro inexistente o protegido.";
+
+    case "NOT_FOUND":
+      return "El registro solicitado no existe.";
+
+    case "UNKNOWN":
+    default:
+      return "Se produjo un error inesperado en la base de datos.";
   }
 }
 
 function isRetryableDatabaseError(
   code: DatabaseErrorCode,
+  error: unknown,
 ): boolean {
+  const sqlErrorNumber = getSqlErrorNumber(error);
+
+  if (sqlErrorNumber === 1205 || sqlErrorNumber === 1222) {
+    return true;
+  }
+
   return [
     "CONNECTION_TIMEOUT",
     "CONNECTION_FAILED",
     "QUERY_TIMEOUT",
-    "QUERY_FAILED",
-    "TRANSACTION_FAILED",
   ].includes(code);
 }
 
 export function toDatabaseError(
   error: unknown,
-  fallbackCode:
-    DatabaseErrorCode = "UNKNOWN",
+  fallbackCode: DatabaseErrorCode = "UNKNOWN",
 ): DatabaseError {
   if (error instanceof DatabaseError) {
     return error;
   }
 
-  const code =
-    resolveDatabaseErrorCode(
-      error,
-      fallbackCode,
-    );
-
-  const originalCode =
-    getOriginalErrorCode(error);
+  const code = resolveDatabaseErrorCode(error, fallbackCode);
+  const originalCode = getOriginalErrorCode(error);
+  const constraintName = getSqlConstraintName(error);
 
   return new DatabaseError(
     {
       code,
-      message:
-        getErrorMessage(error),
-
-      originalCode,
-
-      constraintName:
-        getSqlConstraintName(error),
-
-      retryable:
-        isRetryableDatabaseError(code),
+      message: getPublicDatabaseErrorMessage(code),
+      ...(originalCode ? { originalCode } : {}),
+      ...(constraintName ? { constraintName } : {}),
+      retryable: isRetryableDatabaseError(code, error),
     },
     error,
   );
@@ -294,312 +342,313 @@ export function toDatabaseError(
 function buildMssqlConfiguration(
   configuration: SqlServerConfiguration,
 ): MssqlConfiguration {
-  const sqlConfiguration:
-    MssqlConfiguration = {
-    server:
-      configuration.host,
-
-    database:
-      configuration.database,
-
-    user:
-      configuration.user,
-
-    password:
-      configuration.password,
-
-    connectionTimeout:
-      configuration
-        .connectionTimeoutMilliseconds,
-
-    requestTimeout:
-      configuration
-        .requestTimeoutMilliseconds,
-
+  const sqlConfiguration: MssqlConfiguration = {
+    server: configuration.host,
+    database: configuration.database,
+    user: configuration.user,
+    password: configuration.password,
+    connectionTimeout: configuration.connectionTimeoutMilliseconds,
+    requestTimeout: configuration.requestTimeoutMilliseconds,
     pool: {
-      min:
-        configuration.pool.minimum,
-
-      max:
-        configuration.pool.maximum,
-
-      idleTimeoutMillis:
-        configuration.pool
-          .idleTimeoutMilliseconds,
+      min: configuration.pool.minimum,
+      max: configuration.pool.maximum,
+      idleTimeoutMillis: configuration.pool.idleTimeoutMilliseconds,
     },
-
     options: {
-      encrypt:
-        configuration.encrypt,
-
-      trustServerCertificate:
-        configuration
-          .trustServerCertificate,
-
-      enableArithAbort:
-        true,
+      encrypt: configuration.encrypt,
+      trustServerCertificate: configuration.trustServerCertificate,
+      enableArithAbort: true,
+      abortTransactionOnError: true,
+      useUTC: true,
     },
   };
 
-  if (
-    configuration.connectionMode.type
-    === "INSTANCE"
-  ) {
+  if (configuration.connectionMode.type === "INSTANCE") {
     sqlConfiguration.options = {
       ...sqlConfiguration.options,
-
-      instanceName:
-        configuration
-          .connectionMode
-          .instanceName,
+      instanceName: configuration.connectionMode.instanceName,
     };
   } else {
-    sqlConfiguration.port =
-      configuration
-        .connectionMode
-        .port;
+    sqlConfiguration.port = configuration.connectionMode.port;
   }
 
   return sqlConfiguration;
 }
 
-export function getSqlConnectionState():
-  DatabaseConnectionState {
-  return connectionState;
+function isConnectionPoolUsable(pool: ConnectionPool | null): boolean {
+  return Boolean(pool && pool.connected);
 }
 
-export async function getSqlConnectionPool():
-  Promise<ConnectionPool> {
-  if (connectionPoolPromise) {
-    return connectionPoolPromise;
+async function safelyClosePool(pool: ConnectionPool): Promise<void> {
+  await pool.close();
+}
+
+function validateQueryText(queryText: string): void {
+  if (typeof queryText !== "string" || queryText.trim().length === 0) {
+    throw new DatabaseError({
+      code: "INVALID_CONFIGURATION",
+      message: "La consulta SQL no puede estar vacía.",
+      retryable: false,
+    });
   }
 
-  connectionState = "CONNECTING";
+  if (queryText.length > MAXIMUM_QUERY_TEXT_LENGTH) {
+    throw new DatabaseError({
+      code: "INVALID_CONFIGURATION",
+      message: `La consulta SQL supera el máximo permitido de ${MAXIMUM_QUERY_TEXT_LENGTH} caracteres.`,
+      retryable: false,
+    });
+  }
+}
 
-  const applicationConfiguration =
-    getSqlServerConfiguration();
+export function getSqlConnectionState(): DatabaseConnectionState {
+  return runtimeState.connectionState;
+}
 
-  const sqlConfiguration =
-    buildMssqlConfiguration(
+export async function getSqlConnectionPool(): Promise<ConnectionPool> {
+  if (runtimeState.closePromise) {
+    await runtimeState.closePromise;
+  }
+
+  if (isConnectionPoolUsable(runtimeState.connectionPool)) {
+    return runtimeState.connectionPool as ConnectionPool;
+  }
+
+  if (runtimeState.connectionPoolPromise) {
+    return runtimeState.connectionPoolPromise;
+  }
+
+  runtimeState.connectionPool = null;
+  runtimeState.connectionState = "CONNECTING";
+
+  let connectionPool: ConnectionPool;
+
+  try {
+    const applicationConfiguration = getSqlServerConfiguration();
+    const sqlConfiguration = buildMssqlConfiguration(
       applicationConfiguration,
     );
 
-  const connectionPool =
-    new ConnectionPool(
-      sqlConfiguration,
-    );
+    connectionPool = new ConnectionPool(sqlConfiguration);
+  } catch (error) {
+    runtimeState.connectionState = "ERROR";
 
-  connectionPoolPromise =
-    connectionPool
-      .connect()
-      .then((connectedPool) => {
-        connectionState = "CONNECTED";
+    const message = getInternalErrorMessage(error).toLowerCase();
+    const fallbackCode: DatabaseErrorCode = message.includes("falta")
+      ? "CONFIGURATION_MISSING"
+      : "INVALID_CONFIGURATION";
 
-        connectedPool.on(
-          "error",
-          () => {
-            connectionState = "ERROR";
-            connectionPoolPromise = null;
-          },
-        );
+    throw toDatabaseError(error, fallbackCode);
+  }
 
-        return connectedPool;
-      })
-      .catch((error: unknown) => {
-        connectionState = "ERROR";
-        connectionPoolPromise = null;
+  const connectionPromise = connectionPool
+    .connect()
+    .then((connectedPool) => {
+      runtimeState.connectionPool = connectedPool;
+      runtimeState.connectionState = "CONNECTED";
 
-        throw toDatabaseError(
-          error,
-          "CONNECTION_FAILED",
-        );
+      connectedPool.on("error", () => {
+        if (runtimeState.connectionPool !== connectedPool) {
+          return;
+        }
+
+        runtimeState.connectionPool = null;
+        runtimeState.connectionPoolPromise = null;
+        runtimeState.connectionState = "ERROR";
+
+        void safelyClosePool(connectedPool).catch(() => undefined);
       });
 
-  return connectionPoolPromise;
+      return connectedPool;
+    })
+    .catch((error: unknown) => {
+      if (runtimeState.connectionPool === connectionPool) {
+        runtimeState.connectionPool = null;
+      }
+
+      runtimeState.connectionPoolPromise = null;
+      runtimeState.connectionState = "ERROR";
+
+      void safelyClosePool(connectionPool).catch(() => undefined);
+
+      throw toDatabaseError(error, "CONNECTION_FAILED");
+    });
+
+  runtimeState.connectionPoolPromise = connectionPromise;
+
+  return connectionPromise;
 }
 
-export async function closeSqlConnectionPool():
-  Promise<void> {
-  if (!connectionPoolPromise) {
-    connectionState = "DISCONNECTED";
+export async function closeSqlConnectionPool(): Promise<void> {
+  if (runtimeState.closePromise) {
+    return runtimeState.closePromise;
+  }
+
+  const activePoolPromise = runtimeState.connectionPoolPromise;
+  const activePool = runtimeState.connectionPool;
+
+  if (!activePoolPromise && !activePool) {
+    runtimeState.connectionState = "DISCONNECTED";
     return;
   }
 
-  const activePoolPromise =
-    connectionPoolPromise;
+  runtimeState.connectionState = "CLOSING";
 
-  connectionPoolPromise = null;
-  connectionState = "CLOSING";
+  const closePromise = (async () => {
+    let poolToClose = activePool;
 
-  try {
-    const connectionPool =
-      await activePoolPromise;
+    if (!poolToClose && activePoolPromise) {
+      try {
+        poolToClose = await activePoolPromise;
+      } catch {
+        poolToClose = null;
+      }
+    }
 
-    await connectionPool.close();
+    if (poolToClose) {
+      await safelyClosePool(poolToClose);
+    }
 
-    connectionState = "DISCONNECTED";
-  } catch (error) {
-    connectionState = "ERROR";
+    if (runtimeState.connectionPool === poolToClose) {
+      runtimeState.connectionPool = null;
+    }
 
-    throw toDatabaseError(
-      error,
-      "CONNECTION_FAILED",
-    );
-  }
+    if (runtimeState.connectionPoolPromise === activePoolPromise) {
+      runtimeState.connectionPoolPromise = null;
+    }
+
+    runtimeState.connectionState = "DISCONNECTED";
+  })()
+    .catch((error: unknown) => {
+      runtimeState.connectionState = "ERROR";
+      throw toDatabaseError(error, "CONNECTION_FAILED");
+    })
+    .finally(() => {
+      if (runtimeState.closePromise === closePromise) {
+        runtimeState.closePromise = null;
+      }
+    });
+
+  runtimeState.closePromise = closePromise;
+
+  return closePromise;
 }
 
-export async function createSqlRequest():
-  Promise<Request> {
-  const connectionPool =
-    await getSqlConnectionPool();
+export async function createSqlRequest(): Promise<Request> {
+  const connectionPool = await getSqlConnectionPool();
+
+  if (!isConnectionPoolUsable(connectionPool)) {
+    throw new DatabaseError({
+      code: "CONNECTION_FAILED",
+      message: getPublicDatabaseErrorMessage("CONNECTION_FAILED"),
+      retryable: true,
+    });
+  }
 
   return connectionPool.request();
 }
 
 export async function executeSqlQuery<
-  TRecord extends Record<
-    string,
-    unknown
-  >,
+  TRecord extends Record<string, unknown>,
 >(
   queryText: string,
-  configureRequest?: (
-    request: Request,
-  ) => void,
-): Promise<
-  DatabaseQueryResult<TRecord>
-> {
+  configureRequest?: (request: Request) => void,
+): Promise<DatabaseQueryResult<TRecord>> {
+  validateQueryText(queryText);
+
   try {
-    const request =
-      await createSqlRequest();
+    const request = await createSqlRequest();
 
     configureRequest?.(request);
 
-    const result =
-      await request.query(queryText);
+    const result = await request.query<TRecord>(queryText);
 
     return {
-      records:
-        (result.recordset
-          ?? []) as TRecord[],
-
-      rowsAffected:
-        result.rowsAffected ?? [],
+      records: result.recordset ?? [],
+      rowsAffected: result.rowsAffected ?? [],
     };
   } catch (error) {
-    throw toDatabaseError(
-      error,
-      "QUERY_FAILED",
-    );
+    throw toDatabaseError(error, "QUERY_FAILED");
   }
 }
 
 export async function executeSqlSingle<
-  TRecord extends Record<
-    string,
-    unknown
-  >,
+  TRecord extends Record<string, unknown>,
 >(
   queryText: string,
-  configureRequest?: (
-    request: Request,
-  ) => void,
-): Promise<
-  DatabaseSingleResult<TRecord>
-> {
-  const result =
-    await executeSqlQuery<TRecord>(
-      queryText,
-      configureRequest,
-    );
+  configureRequest?: (request: Request) => void,
+): Promise<DatabaseSingleResult<TRecord>> {
+  const result = await executeSqlQuery<TRecord>(
+    queryText,
+    configureRequest,
+  );
 
   return {
-    record:
-      result.records[0] ?? null,
-
-    rowsAffected:
-      result.rowsAffected,
+    record: result.records[0] ?? null,
+    rowsAffected: result.rowsAffected,
   };
 }
 
 export async function executeSqlRequired<
-  TRecord extends Record<
-    string,
-    unknown
-  >,
+  TRecord extends Record<string, unknown>,
 >(
   queryText: string,
-  configureRequest?: (
-    request: Request,
-  ) => void,
-): Promise<
-  DatabaseRequiredResult<TRecord>
-> {
-  const result =
-    await executeSqlSingle<TRecord>(
-      queryText,
-      configureRequest,
-    );
+  configureRequest?: (request: Request) => void,
+): Promise<DatabaseRequiredResult<TRecord>> {
+  const result = await executeSqlSingle<TRecord>(
+    queryText,
+    configureRequest,
+  );
 
   if (!result.record) {
     throw new DatabaseError({
-      code:
-        "NOT_FOUND",
-
-      message:
-        "El registro solicitado no existe.",
-
-      retryable:
-        false,
+      code: "NOT_FOUND",
+      message: getPublicDatabaseErrorMessage("NOT_FOUND"),
+      retryable: false,
     });
   }
 
   return {
-    record:
-      result.record,
-
-    rowsAffected:
-      result.rowsAffected,
+    record: result.record,
+    rowsAffected: result.rowsAffected,
   };
 }
 
-export async function withSqlTransaction<
-  TResult,
->(
-  callback: (
-    transaction: Transaction,
-  ) => Promise<TResult>,
-
+export async function withSqlTransaction<TResult>(
+  callback: (transaction: Transaction) => Promise<TResult>,
   options: DatabaseTransactionOptions = {
-    isolationLevel:
-      "READ_COMMITTED",
+    isolationLevel: "READ_COMMITTED",
   },
 ): Promise<TResult> {
-  const connectionPool =
-    await getSqlConnectionPool();
+  if (typeof callback !== "function") {
+    throw new DatabaseError({
+      code: "INVALID_CONFIGURATION",
+      message: "La transacción requiere una función de ejecución válida.",
+      retryable: false,
+    });
+  }
 
-  const transaction =
-    new Transaction(
-      connectionPool,
-    );
+  const isolationLevel = ISOLATION_LEVEL_MAP[options.isolationLevel];
 
-  let transactionStarted =
-    false;
+  if (typeof isolationLevel !== "number") {
+    throw new DatabaseError({
+      code: "INVALID_CONFIGURATION",
+      message: "El nivel de aislamiento de la transacción no es válido.",
+      retryable: false,
+    });
+  }
+
+  const connectionPool = await getSqlConnectionPool();
+  const transaction = new Transaction(connectionPool);
+  let transactionStarted = false;
 
   try {
-    await transaction.begin(
-      ISOLATION_LEVEL_MAP[
-        options.isolationLevel
-      ],
-    );
-
+    await transaction.begin(isolationLevel);
     transactionStarted = true;
 
-    const result =
-      await callback(transaction);
+    const result = await callback(transaction);
 
     await transaction.commit();
-
     transactionStarted = false;
 
     return result;
@@ -608,103 +657,77 @@ export async function withSqlTransaction<
       try {
         await transaction.rollback();
       } catch {
-        // SQL Server pudo revertir la transacción automáticamente.
+        // SQL Server puede revertir automáticamente la transacción cuando
+        // abortTransactionOnError está activo.
       }
     }
 
-    throw toDatabaseError(
-      error,
-      "TRANSACTION_FAILED",
-    );
+    throw toDatabaseError(error, "TRANSACTION_FAILED");
   }
 }
 
-export async function getSqlDatabaseHealth():
-  Promise<DatabaseHealthStatus> {
+function requireHealthValue(
+  value: string | null,
+  propertyName: string,
+): string {
+  const normalizedValue = value?.trim() ?? "";
+
+  if (!normalizedValue) {
+    throw new DatabaseError({
+      code: "QUERY_FAILED",
+      message: `SQL Server no devolvió ${propertyName} durante la comprobación de salud.`,
+      retryable: false,
+    });
+  }
+
+  return normalizedValue;
+}
+
+export async function getSqlDatabaseHealth(): Promise<DatabaseHealthStatus> {
   try {
-    const result =
-      await executeSqlRequired<
-        SqlHealthRecord
-      >(`
-        SELECT
-          CAST(
-            SERVERPROPERTY('ServerName')
-            AS NVARCHAR(256)
-          ) AS server_name,
-
-          CAST(
-            SERVERPROPERTY('InstanceName')
-            AS NVARCHAR(256)
-          ) AS instance_name,
-
-          DB_NAME()
-            AS database_name,
-
-          CAST(
-            SERVERPROPERTY('Edition')
-            AS NVARCHAR(256)
-          ) AS edition,
-
-          CAST(
-            SERVERPROPERTY('ProductVersion')
-            AS NVARCHAR(128)
-          ) AS product_version;
-      `);
+    const result = await executeSqlRequired<SqlHealthRecord>(`
+      SELECT
+        CAST(SERVERPROPERTY('ServerName') AS NVARCHAR(256)) AS server_name,
+        CAST(SERVERPROPERTY('InstanceName') AS NVARCHAR(256)) AS instance_name,
+        DB_NAME() AS database_name,
+        CAST(SERVERPROPERTY('Edition') AS NVARCHAR(256)) AS edition,
+        CAST(SERVERPROPERTY('ProductVersion') AS NVARCHAR(128)) AS product_version;
+    `);
 
     return {
-      healthy:
-        true,
-
-      state:
-        "CONNECTED",
-
-      serverName:
-        result.record.server_name
-        ?? "",
-
-      instanceName:
-        result.record.instance_name,
-
-      databaseName:
-        result.record.database_name
-        ?? "",
-
-      edition:
-        result.record.edition
-        ?? "",
-
-      productVersion:
-        result.record.product_version
-        ?? "",
+      healthy: true,
+      state: "CONNECTED",
+      serverName: requireHealthValue(
+        result.record.server_name,
+        "el nombre del servidor",
+      ),
+      instanceName: result.record.instance_name?.trim() || null,
+      databaseName: requireHealthValue(
+        result.record.database_name,
+        "el nombre de la base de datos",
+      ),
+      edition: requireHealthValue(
+        result.record.edition,
+        "la edición",
+      ),
+      productVersion: requireHealthValue(
+        result.record.product_version,
+        "la versión",
+      ),
     };
   } catch (error) {
-    const databaseError =
-      toDatabaseError(error);
-
-    const currentState =
-      getSqlConnectionState();
-
-    const unhealthyState:
-      Exclude<
-        DatabaseConnectionState,
-        "CONNECTED"
-      > =
-      currentState === "CONNECTED"
-        ? "ERROR"
-        : currentState;
+    const databaseError = toDatabaseError(error);
+    const currentState = getSqlConnectionState();
+    const unhealthyState: Exclude<
+      DatabaseConnectionState,
+      "CONNECTED"
+    > = currentState === "CONNECTED" ? "ERROR" : currentState;
 
     return {
-      healthy:
-        false,
-
-      state:
-        unhealthyState,
-
-      errorCode:
-        databaseError.details.code,
-
-      message:
-        databaseError.details.message,
+      healthy: false,
+      state: unhealthyState,
+      errorCode: databaseError.details.code,
+      message: databaseError.details.message,
     };
   }
 }

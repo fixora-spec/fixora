@@ -151,6 +151,23 @@
       "close": "Cerrar acceso",
       "back": "Volver"
     },
+    "authenticationShell": {
+      "userSignIn": {
+        "title": "¡Hola de nuevo!",
+        "description": "Accede a tu cuenta para continuar disfrutando de los servicios y soluciones de Fixora.",
+        "action": "Registrarme"
+      },
+      "userRegistration": {
+        "title": "¡Bienvenido!",
+        "description": "Crea tu cuenta y forma parte de Fixora para acceder a nuestros servicios y beneficios.",
+        "action": "Iniciar sesión"
+      },
+      "adminSignIn": {
+        "title": "Panel administrativo",
+        "description": "Acceso exclusivo para el personal autorizado de Fixora.",
+        "action": "Acceso de usuario"
+      }
+    },
     "userSignIn": {
       "title": "Iniciar sesión",
       "description": "Ingresa con el correo y la contraseña de tu cuenta verificada.",

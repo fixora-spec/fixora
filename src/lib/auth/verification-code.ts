@@ -15,31 +15,35 @@ import type {
   VerificationPurpose,
 } from "@/types/auth";
 
-const DEFAULT_EMAIL_CODE_TTL_MINUTES =
-  10;
+const DEFAULT_EMAIL_CODE_TTL_MINUTES = 10;
+const DEFAULT_PASSWORD_RESET_CODE_TTL_MINUTES = 10;
 
-const DEFAULT_PASSWORD_RESET_CODE_TTL_MINUTES =
-  10;
+const MINIMUM_PEPPER_LENGTH = 32;
+const MAXIMUM_PEPPER_LENGTH = 1_024;
+const MAXIMUM_CODE_INPUT_LENGTH = 64;
+const SHA_256_HEX_LENGTH = 64;
+const SHA_256_HEX_PATTERN = /^[a-f0-9]{64}$/iu;
+
+const VERIFICATION_PURPOSES = new Set<VerificationPurpose>([
+  "EMAIL_VERIFICATION",
+  "PASSWORD_RESET",
+  "ADMIN_ACTIVATION",
+]);
 
 export type GeneratedVerificationCode = {
   code: string;
   codeHash: string;
-
   purpose: VerificationPurpose;
-
   createdAt: Date;
   expiresAt: Date;
-
   maximumAttempts: number;
   resendAvailableAt: Date;
 };
 
 export type StoredVerificationCodeState = {
   codeHash: string;
-
   attemptsUsed: number;
   maximumAttempts: number;
-
   expiresAt: Date;
   consumedAt: Date | null;
 };
@@ -50,8 +54,7 @@ function readPositiveIntegerEnvironmentValue(
   minimum: number,
   maximum: number,
 ): number {
-  const rawValue =
-    process.env[name]?.trim();
+  const rawValue = process.env[name]?.trim();
 
   if (!rawValue) {
     return fallbackValue;
@@ -63,16 +66,10 @@ function readPositiveIntegerEnvironmentValue(
     );
   }
 
-  const parsedValue =
-    Number.parseInt(
-      rawValue,
-      10,
-    );
+  const parsedValue = Number.parseInt(rawValue, 10);
 
   if (
-    !Number.isSafeInteger(
-      parsedValue,
-    )
+    !Number.isSafeInteger(parsedValue)
     || parsedValue < minimum
     || parsedValue > maximum
   ) {
@@ -84,28 +81,92 @@ function readPositiveIntegerEnvironmentValue(
   return parsedValue;
 }
 
-function getVerificationCodePepper():
-  string {
-  const pepper =
-    process.env
-      .AUTH_CODE_PEPPER
-      ?.trim();
+function isVerificationPurpose(
+  purpose: VerificationPurpose,
+): boolean {
+  return VERIFICATION_PURPOSES.has(purpose);
+}
+
+function assertVerificationPurpose(
+  purpose: VerificationPurpose,
+): void {
+  if (!isVerificationPurpose(purpose)) {
+    throw new Error(
+      "El propósito del código de verificación no es válido.",
+    );
+  }
+}
+
+function isValidDate(value: Date): boolean {
+  return (
+    value instanceof Date
+    && !Number.isNaN(value.getTime())
+  );
+}
+
+function assertValidDate(
+  value: Date,
+  name: string,
+): void {
+  if (!isValidDate(value)) {
+    throw new Error(`${name} no contiene una fecha válida.`);
+  }
+}
+
+function isValidAttemptState(
+  attemptsUsed: number,
+  maximumAttempts: number,
+): boolean {
+  return (
+    Number.isSafeInteger(attemptsUsed)
+    && Number.isSafeInteger(maximumAttempts)
+    && attemptsUsed >= 0
+    && maximumAttempts >= 1
+    && attemptsUsed <= maximumAttempts
+  );
+}
+
+function getVerificationCodePepper(): string {
+  const pepper = process.env.AUTH_CODE_PEPPER;
 
   if (
-    !pepper
-    || pepper.length < 32
+    typeof pepper !== "string"
+    || pepper.trim().length === 0
+    || pepper.length < MINIMUM_PEPPER_LENGTH
+    || pepper.length > MAXIMUM_PEPPER_LENGTH
+    || /[\r\n\0]/u.test(pepper)
   ) {
     throw new Error(
-      "AUTH_CODE_PEPPER debe tener al menos 32 caracteres.",
+      `AUTH_CODE_PEPPER debe contener un secreto de ${MINIMUM_PEPPER_LENGTH} a ${MAXIMUM_PEPPER_LENGTH} caracteres sin saltos de línea.`,
     );
   }
 
+  // El pepper se conserva exactamente como fue configurado.
   return pepper;
+}
+
+function getVerificationResendCooldownSeconds(): number {
+  const cooldownSeconds =
+    AUTH_ATTEMPT_RULES.verificationResendCooldownSeconds;
+
+  if (
+    !Number.isSafeInteger(cooldownSeconds)
+    || cooldownSeconds < 0
+    || cooldownSeconds > 3_600
+  ) {
+    throw new Error(
+      "El tiempo de espera para reenviar códigos no es válido.",
+    );
+  }
+
+  return cooldownSeconds;
 }
 
 export function getVerificationCodeTtlMinutes(
   purpose: VerificationPurpose,
 ): number {
+  assertVerificationPurpose(purpose);
+
   if (purpose === "PASSWORD_RESET") {
     return readPositiveIntegerEnvironmentValue(
       "AUTH_PASSWORD_RESET_CODE_TTL_MINUTES",
@@ -123,12 +184,10 @@ export function getVerificationCodeTtlMinutes(
   );
 }
 
-export function getMaximumVerificationAttempts():
-  number {
+export function getMaximumVerificationAttempts(): number {
   return readPositiveIntegerEnvironmentValue(
     "AUTH_CODE_MAX_ATTEMPTS",
-    AUTH_ATTEMPT_RULES
-      .maximumVerificationAttempts,
+    AUTH_ATTEMPT_RULES.maximumVerificationAttempts,
     1,
     20,
   );
@@ -137,6 +196,10 @@ export function getMaximumVerificationAttempts():
 export function normalizeCode(
   code: string,
 ): string {
+  if (code.length > MAXIMUM_CODE_INPUT_LENGTH) {
+    return "";
+  }
+
   return code
     .trim()
     .toUpperCase()
@@ -146,24 +209,22 @@ export function normalizeCode(
 export function isVerificationCodeFormatValid(
   code: string,
 ): boolean {
-  return VERIFICATION_CODE_RULES
-    .formatPattern
-    .test(
-      normalizeCode(code),
-    );
+  const normalizedCode = normalizeCode(code);
+
+  return (
+    normalizedCode.length === VERIFICATION_CODE_RULES.length
+    && VERIFICATION_CODE_RULES.formatPattern.test(
+      normalizedCode,
+    )
+  );
 }
 
 export function createVerificationCodeHash(
   code: string,
 ): string {
-  const normalizedCode =
-    normalizeCode(code);
+  const normalizedCode = normalizeCode(code);
 
-  if (
-    !isVerificationCodeFormatValid(
-      normalizedCode,
-    )
-  ) {
+  if (!isVerificationCodeFormatValid(normalizedCode)) {
     throw new Error(
       "El código de verificación no tiene un formato válido.",
     );
@@ -179,13 +240,12 @@ export function verifyVerificationCodeHash(
   code: string,
   expectedHash: string,
 ): boolean {
-  const normalizedCode =
-    normalizeCode(code);
+  const normalizedCode = normalizeCode(code);
 
   if (
-    !isVerificationCodeFormatValid(
-      normalizedCode,
-    )
+    !isVerificationCodeFormatValid(normalizedCode)
+    || expectedHash.length !== SHA_256_HEX_LENGTH
+    || !SHA_256_HEX_PATTERN.test(expectedHash)
   ) {
     return false;
   }
@@ -201,58 +261,39 @@ export function generateAuthVerificationCode(
   purpose: VerificationPurpose,
   currentDate = new Date(),
 ): GeneratedVerificationCode {
-  if (
-    Number.isNaN(
-      currentDate.getTime(),
-    )
-  ) {
+  assertVerificationPurpose(purpose);
+  assertValidDate(currentDate, "currentDate");
+
+  const code = generateVerificationCode();
+
+  if (!isVerificationCodeFormatValid(code)) {
     throw new Error(
-      "La fecha proporcionada no es válida.",
+      "El generador produjo un código de verificación no válido.",
     );
   }
 
-  const code =
-    generateVerificationCode();
+  const ttlMinutes = getVerificationCodeTtlMinutes(purpose);
+  const resendCooldownSeconds =
+    getVerificationResendCooldownSeconds();
 
-  const ttlMinutes =
-    getVerificationCodeTtlMinutes(
-      purpose,
-    );
+  const createdAt = new Date(currentDate.getTime());
+  const expiresAt = new Date(
+    createdAt.getTime() + ttlMinutes * 60_000,
+  );
+  const resendAvailableAt = new Date(
+    createdAt.getTime() + resendCooldownSeconds * 1_000,
+  );
 
-  const expiresAt =
-    new Date(
-      currentDate.getTime()
-      + ttlMinutes * 60_000,
-    );
-
-  const resendAvailableAt =
-    new Date(
-      currentDate.getTime()
-      + AUTH_ATTEMPT_RULES
-        .verificationResendCooldownSeconds
-        * 1_000,
-    );
+  assertValidDate(expiresAt, "expiresAt");
+  assertValidDate(resendAvailableAt, "resendAvailableAt");
 
   return {
     code,
-
-    codeHash:
-      createVerificationCodeHash(
-        code,
-      ),
-
+    codeHash: createVerificationCodeHash(code),
     purpose,
-
-    createdAt:
-      new Date(
-        currentDate.getTime(),
-      ),
-
+    createdAt,
     expiresAt,
-
-    maximumAttempts:
-      getMaximumVerificationAttempts(),
-
+    maximumAttempts: getMaximumVerificationAttempts(),
     resendAvailableAt,
   };
 }
@@ -261,10 +302,14 @@ export function hasVerificationCodeExpired(
   expiresAt: Date,
   currentDate = new Date(),
 ): boolean {
-  return (
-    expiresAt.getTime()
-    <= currentDate.getTime()
-  );
+  if (
+    !isValidDate(expiresAt)
+    || !isValidDate(currentDate)
+  ) {
+    return true;
+  }
+
+  return expiresAt.getTime() <= currentDate.getTime();
 }
 
 export function hasVerificationCodeBeenConsumed(
@@ -277,10 +322,11 @@ export function hasExceededVerificationAttempts(
   attemptsUsed: number,
   maximumAttempts: number,
 ): boolean {
-  return (
-    attemptsUsed
-    >= maximumAttempts
-  );
+  if (!isValidAttemptState(attemptsUsed, maximumAttempts)) {
+    return true;
+  }
+
+  return attemptsUsed >= maximumAttempts;
 }
 
 export function canAttemptVerification(
@@ -289,21 +335,17 @@ export function canAttemptVerification(
 ): boolean {
   if (
     state.consumedAt !== null
-  ) {
-    return false;
-  }
-
-  if (
-    hasVerificationCodeExpired(
+    || !isValidDate(state.expiresAt)
+    || !isValidDate(currentDate)
+    || !isValidAttemptState(
+      state.attemptsUsed,
+      state.maximumAttempts,
+    )
+    || hasVerificationCodeExpired(
       state.expiresAt,
       currentDate,
     )
-  ) {
-    return false;
-  }
-
-  if (
-    hasExceededVerificationAttempts(
+    || hasExceededVerificationAttempts(
       state.attemptsUsed,
       state.maximumAttempts,
     )
@@ -311,58 +353,51 @@ export function canAttemptVerification(
     return false;
   }
 
-  return true;
+  return (
+    state.codeHash.length === SHA_256_HEX_LENGTH
+    && SHA_256_HEX_PATTERN.test(state.codeHash)
+  );
 }
 
 export function getRemainingVerificationAttempts(
   attemptsUsed: number,
   maximumAttempts: number,
 ): number {
-  if (
-    !Number.isSafeInteger(
-      attemptsUsed,
-    )
-    || !Number.isSafeInteger(
-      maximumAttempts,
-    )
-    || attemptsUsed < 0
-    || maximumAttempts < 1
-  ) {
+  if (!isValidAttemptState(attemptsUsed, maximumAttempts)) {
     throw new Error(
       "Los intentos del código no son válidos.",
     );
   }
 
-  return Math.max(
-    0,
-    maximumAttempts
-      - attemptsUsed,
-  );
+  return Math.max(0, maximumAttempts - attemptsUsed);
 }
 
 export function canResendVerificationCode(
   resendAvailableAt: Date,
   currentDate = new Date(),
 ): boolean {
-  return (
-    currentDate.getTime()
-    >= resendAvailableAt.getTime()
-  );
+  if (
+    !isValidDate(resendAvailableAt)
+    || !isValidDate(currentDate)
+  ) {
+    return false;
+  }
+
+  return currentDate.getTime() >= resendAvailableAt.getTime();
 }
 
 export function getVerificationCodeRemainingSeconds(
   targetDate: Date,
   currentDate = new Date(),
 ): number {
+  assertValidDate(targetDate, "targetDate");
+  assertValidDate(currentDate, "currentDate");
+
   const remainingMilliseconds =
-    targetDate.getTime()
-    - currentDate.getTime();
+    targetDate.getTime() - currentDate.getTime();
 
   return Math.max(
     0,
-    Math.ceil(
-      remainingMilliseconds
-      / 1_000,
-    ),
+    Math.ceil(remainingMilliseconds / 1_000),
   );
 }

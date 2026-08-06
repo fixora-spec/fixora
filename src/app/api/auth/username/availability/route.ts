@@ -1,452 +1,367 @@
-import {
+import type {
   NextResponse,
 } from "next/server";
 
 import {
+  AUTH_RATE_LIMIT_ACTIONS,
+  AUTH_REQUEST_LIMITS,
   USERNAME_RULES,
 } from "@/config/auth.config";
 
 import {
-  AuthServiceError,
   checkUsernameAvailability,
 } from "@/lib/auth/auth.service";
 
-export const runtime =
-  "nodejs";
+import {
+  consumeDefaultAuthRateLimit,
+} from "@/lib/auth/rate-limit";
 
-export const dynamic =
-  "force-dynamic";
+import {
+  getRequestIpAddress,
+} from "@/lib/auth/session";
 
-const MAXIMUM_REQUEST_BODY_BYTES =
-  8_192;
+import {
+  validateUsername,
+} from "@/lib/auth/username";
 
-type JsonRecord =
-  Record<string, unknown>;
+import {
+  createApiErrorResponse,
+  createApiSuccessResponse,
+} from "@/lib/http/api-response";
 
-type SupportedLocale =
-  | "es"
-  | "en";
+import {
+  isJsonBodyError,
+  parseJsonBody,
+  type JsonBodyError,
+} from "@/lib/http/parse-json-body";
 
-type LocalizedMessages = {
+import {
+  isRequestOriginError,
+  verifyRequestOrigin,
+} from "@/lib/http/verify-request-origin";
+
+import type {
+  Locale,
+} from "@/types/locale";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+const BODY_LIMIT_BYTES = Math.min(
+  AUTH_REQUEST_LIMITS.maximumJsonBodyBytes,
+  8_192,
+);
+
+const MAXIMUM_QUERY_USERNAME_LENGTH = 256;
+const UNKNOWN_IP_IDENTIFIER = "unknown";
+
+type Messages = {
   forbiddenOrigin: string;
   invalidContentType: string;
   requestTooLarge: string;
   invalidJson: string;
   invalidUsername: string;
+  rateLimited: string;
   internalError: string;
 };
 
-function isRecord(
-  value: unknown,
-): value is JsonRecord {
-  return (
+function resolveLocale(
+  request: Request,
+  value?: unknown,
+): Locale {
+  if (value === "en" || value === "es") {
+    return value;
+  }
+
+  if (
     typeof value === "object"
     && value !== null
-    && !Array.isArray(
-      value,
-    )
-  );
-}
+    && !Array.isArray(value)
+    && "locale" in value
+    && (value.locale === "en" || value.locale === "es")
+  ) {
+    return value.locale;
+  }
 
-function resolveLocale(
-  value: unknown,
-): SupportedLocale {
-  return value === "en"
+  const explicitLocale = request.headers
+    .get("x-fixora-locale")
+    ?.trim()
+    .toLowerCase();
+
+  if (explicitLocale === "en") {
+    return "en";
+  }
+
+  return request.headers
+    .get("accept-language")
+    ?.trim()
+    .toLowerCase()
+    .startsWith("en")
     ? "en"
     : "es";
 }
 
-function getLocalizedMessages(
-  locale: SupportedLocale,
-): LocalizedMessages {
-  if (
-    locale === "en"
-  ) {
+function getMessages(locale: Locale): Messages {
+  if (locale === "en") {
     return {
-      forbiddenOrigin:
-        "The request origin is not allowed.",
-
+      forbiddenOrigin: "The request origin is not allowed.",
       invalidContentType:
-        "The request must use application/json.",
-
-      requestTooLarge:
-        "The request body is too large.",
-
-      invalidJson:
-        "The request body does not contain valid JSON.",
-
+        "The request must use an uncompressed JSON body.",
+      requestTooLarge: "The request body is too large.",
+      invalidJson: "The request body does not contain valid JSON.",
       invalidUsername:
         `Enter a username between ${USERNAME_RULES.minimumLength} and ${USERNAME_RULES.maximumLength} characters using only letters, numbers, periods, hyphens, or underscores.`,
-
+      rateLimited:
+        "Too many username checks were made. Please wait before trying again.",
       internalError:
         "Username availability could not be checked at this time.",
     };
   }
 
   return {
-    forbiddenOrigin:
-      "El origen de la solicitud no está permitido.",
-
+    forbiddenOrigin: "El origen de la solicitud no está permitido.",
     invalidContentType:
-      "La solicitud debe utilizar application/json.",
-
-    requestTooLarge:
-      "El contenido de la solicitud es demasiado grande.",
-
-    invalidJson:
-      "El contenido de la solicitud no contiene un JSON válido.",
-
+      "La solicitud debe utilizar un cuerpo JSON sin compresión.",
+    requestTooLarge: "El contenido de la solicitud es demasiado grande.",
+    invalidJson: "El contenido de la solicitud no contiene un JSON válido.",
     invalidUsername:
-      `Ingresa un nombre de pila de entre ${USERNAME_RULES.minimumLength} y ${USERNAME_RULES.maximumLength} caracteres usando solo letras, números, puntos, guiones o guiones bajos.`,
-
+      `Ingresa un nombre de usuario de entre ${USERNAME_RULES.minimumLength} y ${USERNAME_RULES.maximumLength} caracteres usando solo letras, números, puntos, guiones o guiones bajos.`,
+    rateLimited:
+      "Se realizaron demasiadas comprobaciones de nombre de usuario. Espera antes de intentarlo nuevamente.",
     internalError:
-      "No se pudo comprobar la disponibilidad del nombre de pila.",
+      "No se pudo comprobar la disponibilidad del nombre de usuario.",
   };
 }
 
-function hasTrustedRequestOrigin(
-  request: Request,
-): boolean {
-  const originHeader =
-    request.headers.get(
-      "origin",
-    );
-
-  const fetchSiteHeader =
-    request.headers.get(
-      "sec-fetch-site",
-    );
-
-  if (
-    originHeader === null
-  ) {
-    return (
-      fetchSiteHeader === null
-      || fetchSiteHeader
-        === "same-origin"
-      || fetchSiteHeader
-        === "none"
-    );
+function getJsonBodyErrorMessage(
+  error: JsonBodyError,
+  messages: Messages,
+): string {
+  if (error.status === 415) {
+    return messages.invalidContentType;
   }
 
-  try {
-    return (
-      new URL(
-        originHeader,
-      ).origin
-      === new URL(
-        request.url,
-      ).origin
-    );
-  } catch {
-    return false;
+  switch (error.code) {
+    case "BODY_TOO_LARGE":
+      return messages.requestTooLarge;
+
+    case "INVALID_JSON":
+      return messages.invalidJson;
+
+    case "INVALID_REQUEST":
+    default:
+      return messages.invalidUsername;
   }
 }
 
-function hasJsonContentType(
-  request: Request,
-): boolean {
-  return (
-    request.headers
-      .get(
-        "content-type",
-      )
-      ?.toLowerCase()
-      .includes(
-        "application/json",
-      )
-    ?? false
-  );
-}
-
-function exceedsMaximumBodySize(
-  request: Request,
-): boolean {
-  const contentLength =
-    Number.parseInt(
-      request.headers.get(
-        "content-length",
-      ) ?? "",
-      10,
-    );
-
-  return (
-    Number.isFinite(
-      contentLength,
-    )
-    && contentLength
-      > MAXIMUM_REQUEST_BODY_BYTES
-  );
-}
-
-function normalizeUsername(
-  value: unknown,
-): string | null {
-  if (
-    typeof value !== "string"
-  ) {
+function readUsernameValue(value: unknown): string | null {
+  if (typeof value !== "string" || value.length > MAXIMUM_QUERY_USERNAME_LENGTH) {
     return null;
   }
 
-  const username =
-    value
-      .trim()
-      .normalize(
-        "NFC",
+  return value;
+}
+
+function getRateLimitIdentifiers(
+  request: Request,
+  normalizedUsername: string,
+): readonly string[] {
+  const ipAddress = getRequestIpAddress(request) ?? UNKNOWN_IP_IDENTIFIER;
+
+  return [
+    `ip:${ipAddress}`,
+    `username:${normalizedUsername || "invalid"}`,
+  ];
+}
+
+async function consumeAvailabilityLimits(
+  identifiers: readonly string[],
+): Promise<{
+  allowed: boolean;
+  retryAfterSeconds: number;
+}> {
+  let retryAfterSeconds = 0;
+
+  for (const identifier of identifiers) {
+    const result = await consumeDefaultAuthRateLimit(
+      AUTH_RATE_LIMIT_ACTIONS.usernameAvailability,
+      identifier,
+    );
+
+    if (!result.allowed) {
+      retryAfterSeconds = Math.max(
+        retryAfterSeconds,
+        result.retryAfterSeconds,
       );
-
-  if (
-    username.length
-      < USERNAME_RULES.minimumLength
-    || username.length
-      > USERNAME_RULES.maximumLength
-    || !USERNAME_RULES
-      .allowedPattern
-      .test(
-        username,
-      )
-  ) {
-    return null;
+    }
   }
 
-  return username;
-}
-
-function createSuccessResponse(
-  data: unknown,
-): NextResponse {
-  return NextResponse.json(
-    {
-      success:
-        true,
-
-      data,
-    },
-    {
-      status:
-        200,
-
-      headers: {
-        "Cache-Control":
-          "no-store",
-
-        Pragma:
-          "no-cache",
-      },
-    },
-  );
-}
-
-function createErrorResponse(
-  status: number,
-  code: string,
-  message: string,
-): NextResponse {
-  return NextResponse.json(
-    {
-      success:
-        false,
-
-      error: {
-        code,
-        message,
-
-        fieldErrors:
-          code === "INVALID_USERNAME"
-            ? [
-                {
-                  field:
-                    "username",
-
-                  code:
-                    "INVALID_USERNAME",
-                },
-              ]
-            : [],
-      },
-    },
-    {
-      status,
-
-      headers: {
-        "Cache-Control":
-          "no-store",
-
-        Pragma:
-          "no-cache",
-      },
-    },
-  );
-}
-
-function createServiceErrorResponse(
-  error: unknown,
-  messages: LocalizedMessages,
-): NextResponse {
-  if (
-    error instanceof AuthServiceError
-  ) {
-    return createErrorResponse(
-      error.status,
-      error.code,
-      error.message,
-    );
-  }
-
-  console.error(
-    "USERNAME_AVAILABILITY_ERROR",
-    error,
-  );
-
-  return createErrorResponse(
-    500,
-    "INTERNAL_SERVER_ERROR",
-    messages.internalError,
-  );
+  return {
+    allowed: retryAfterSeconds === 0,
+    retryAfterSeconds,
+  };
 }
 
 async function handleAvailabilityCheck(
+  request: Request,
   usernameValue: unknown,
-  localeValue: unknown,
+  localeValue?: unknown,
 ): Promise<NextResponse> {
-  const locale =
-    resolveLocale(
-      localeValue,
-    );
+  const locale = resolveLocale(request, localeValue);
+  const messages = getMessages(locale);
+  const username = readUsernameValue(usernameValue);
 
-  const messages =
-    getLocalizedMessages(
-      locale,
-    );
-
-  const username =
-    normalizeUsername(
-      usernameValue,
-    );
-
-  if (
-    username === null
-  ) {
-    return createErrorResponse(
-      400,
-      "INVALID_USERNAME",
-      messages.invalidUsername,
-    );
+  if (username === null) {
+    return createApiErrorResponse({
+      status: 400,
+      code: "INVALID_USERNAME",
+      message: messages.invalidUsername,
+      fieldErrors: [
+        {
+          field: "username",
+          code: "INVALID_USERNAME",
+        },
+      ],
+    });
   }
 
-  try {
-    const result =
-      await checkUsernameAvailability(
-        username,
-        true,
-      );
+  const validation = validateUsername(username);
+  const rateLimitIdentifiers = getRateLimitIdentifiers(
+    request,
+    validation.normalizedValue,
+  );
 
-    return createSuccessResponse(
-      result,
+  try {
+    const rateLimit = await consumeAvailabilityLimits(
+      rateLimitIdentifiers,
     );
-  } catch (error) {
-    return createServiceErrorResponse(
-      error,
-      messages,
+
+    if (!rateLimit.allowed) {
+      return createApiErrorResponse({
+        status: 429,
+        code: "RATE_LIMITED",
+        message: messages.rateLimited,
+        retryAfterSeconds: Math.max(
+          1,
+          rateLimit.retryAfterSeconds,
+        ),
+      });
+    }
+
+    if (!validation.valid) {
+      return createApiSuccessResponse({
+        username: validation.value,
+        normalizedUsername: validation.normalizedValue,
+        available: false,
+        reason: "INVALID" as const,
+        suggestions: [] as readonly string[],
+      });
+    }
+
+    const result = await checkUsernameAvailability(
+      validation.value,
+      true,
     );
+
+    return createApiSuccessResponse(result);
+  } catch {
+    return createApiErrorResponse({
+      status: 500,
+      code: "INTERNAL_ERROR",
+      message: messages.internalError,
+    });
   }
 }
 
 export async function GET(
   request: Request,
 ): Promise<NextResponse> {
-  const searchParameters =
-    new URL(
-      request.url,
-    ).searchParams;
+  const requestUrl = new URL(request.url);
+  const locale = resolveLocale(
+    request,
+    requestUrl.searchParams.get("locale"),
+  );
+
+  try {
+    verifyRequestOrigin(request, {
+      allowSafeMethods: false,
+      requireOrigin: false,
+    });
+  } catch (error) {
+    if (isRequestOriginError(error)) {
+      return createApiErrorResponse({
+        status: error.status,
+        code: error.code,
+        message: getMessages(locale).forbiddenOrigin,
+      });
+    }
+
+    return createApiErrorResponse({
+      status: 500,
+      code: "INTERNAL_ERROR",
+      message: getMessages(locale).internalError,
+    });
+  }
 
   return handleAvailabilityCheck(
-    searchParameters.get(
-      "username",
-    ),
-    searchParameters.get(
-      "locale",
-    ),
+    request,
+    requestUrl.searchParams.get("username"),
+    locale,
   );
 }
 
 export async function POST(
   request: Request,
 ): Promise<NextResponse> {
-  const fallbackMessages =
-    getLocalizedMessages(
-      "es",
-    );
-
-  if (
-    !hasTrustedRequestOrigin(
-      request,
-    )
-  ) {
-    return createErrorResponse(
-      403,
-      "FORBIDDEN_ORIGIN",
-      fallbackMessages
-        .forbiddenOrigin,
-    );
-  }
-
-  if (
-    !hasJsonContentType(
-      request,
-    )
-  ) {
-    return createErrorResponse(
-      415,
-      "UNSUPPORTED_MEDIA_TYPE",
-      fallbackMessages
-        .invalidContentType,
-    );
-  }
-
-  if (
-    exceedsMaximumBodySize(
-      request,
-    )
-  ) {
-    return createErrorResponse(
-      413,
-      "REQUEST_BODY_TOO_LARGE",
-      fallbackMessages
-        .requestTooLarge,
-    );
-  }
-
-  let body:
-    JsonRecord;
+  const fallbackLocale = resolveLocale(request);
 
   try {
-    const bodyValue: unknown =
-      await request.json();
-
-    if (
-      !isRecord(
-        bodyValue,
-      )
-    ) {
-      throw new Error(
-        "INVALID_JSON_BODY",
-      );
+    verifyRequestOrigin(request);
+  } catch (error) {
+    if (isRequestOriginError(error)) {
+      return createApiErrorResponse({
+        status: error.status,
+        code: error.code,
+        message: getMessages(fallbackLocale).forbiddenOrigin,
+      });
     }
 
-    body =
-      bodyValue;
-  } catch {
-    return createErrorResponse(
-      400,
-      "INVALID_JSON_BODY",
-      fallbackMessages
-        .invalidJson,
-    );
+    return createApiErrorResponse({
+      status: 500,
+      code: "INTERNAL_ERROR",
+      message: getMessages(fallbackLocale).internalError,
+    });
+  }
+
+  let body: Record<string, unknown>;
+
+  try {
+    body = await parseJsonBody<Record<string, unknown>>(request, {
+      maximumBytes: BODY_LIMIT_BYTES,
+      requireObject: true,
+    });
+  } catch (error) {
+    if (isJsonBodyError(error)) {
+      return createApiErrorResponse({
+        status: error.status,
+        code: error.code,
+        message: getJsonBodyErrorMessage(
+          error,
+          getMessages(fallbackLocale),
+        ),
+      });
+    }
+
+    return createApiErrorResponse({
+      status: 500,
+      code: "INTERNAL_ERROR",
+      message: getMessages(fallbackLocale).internalError,
+    });
   }
 
   return handleAvailabilityCheck(
+    request,
     body.username,
-    body.locale,
+    body,
   );
 }

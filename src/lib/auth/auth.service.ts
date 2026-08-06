@@ -56,6 +56,7 @@ import {
   findAccountByEmail,
   findAccountById,
   findPotentialUsernameConflicts,
+  createPendingUserAccount,
   markAccountEmailAsVerified,
   recordSuccessfulSignIn,
   toAccountPublicRecord,
@@ -330,6 +331,26 @@ const PASSWORD_RESET_TOKEN_TTL_MINUTES =
 const MAXIMUM_CODE_GENERATION_ATTEMPTS =
   20;
 
+const MAXIMUM_PASSWORD_RESET_TOKEN_LENGTH =
+  2_048;
+
+const MAXIMUM_PASSWORD_RESET_TOKEN_CLOCK_SKEW_MS =
+  60_000;
+
+const BASE64URL_PATTERN =
+  /^[A-Za-z0-9_-]+$/u;
+
+const FORBIDDEN_CONTROL_CHARACTER_PATTERN =
+  /[\u0000-\u001F\u007F]/u;
+
+/*
+ * Hash de una contraseña ficticia utilizado únicamente para equilibrar el
+ * coste de los intentos contra cuentas inexistentes. No corresponde a una
+ * cuenta real ni concede acceso.
+ */
+const DUMMY_PASSWORD_HASH =
+  "v1$scrypt$16384$8$1$Zml4b3JhLWR1bW15LXNhbHQtZm9yLXRpbWluZy12MSE$QL_IAtXU2UDv6dFQH12iaou0e3CDMFB5Ok8wd__A2mjnDp4TrQu3472I8HYqFnimIxmSvYl6tvtFp9x_wjLusA";
+
 function createPublicPasswordResetTiming(
   currentDate: Date,
 ): PasswordResetRequestResult {
@@ -399,21 +420,23 @@ function getPasswordResetTokenSecret():
   string {
   const secret =
     process.env
-      .AUTH_PASSWORD_RESET_TOKEN_SECRET
-      ?.trim()
-    || process.env
-      .AUTH_SESSION_PEPPER
-      ?.trim();
+      .AUTH_PASSWORD_RESET_TOKEN_SECRET;
 
   if (
-    !secret
+    typeof secret !== "string"
+    || secret.trim().length === 0
     || secret.length < 32
+    || secret.length > 1_024
+    || FORBIDDEN_CONTROL_CHARACTER_PATTERN.test(
+      secret,
+    )
   ) {
     throw new Error(
-      "AUTH_PASSWORD_RESET_TOKEN_SECRET o AUTH_SESSION_PEPPER debe tener al menos 32 caracteres.",
+      "AUTH_PASSWORD_RESET_TOKEN_SECRET debe contener un secreto válido de al menos 32 caracteres.",
     );
   }
 
+  // El secreto se conserva exactamente como fue configurado.
   return secret;
 }
 
@@ -516,123 +539,134 @@ function isResetTokenPayload(
 
 function parsePasswordResetToken(
   token: string,
+  currentDate = new Date(),
 ): ResetTokenPayload {
-  const parts =
-    token.split(".");
-
-  if (parts.length !== 2) {
+  const invalidToken = (): never => {
     throw new AuthServiceError(
       "PASSWORD_RESET_TOKEN_INVALID",
       "El token de recuperación no es válido.",
       400,
     );
+  };
+
+  if (
+    token.length === 0
+    || token.length > MAXIMUM_PASSWORD_RESET_TOKEN_LENGTH
+    || FORBIDDEN_CONTROL_CHARACTER_PATTERN.test(token)
+  ) {
+    return invalidToken();
   }
 
-  const [
-    encodedPayload,
-    providedSignature,
-  ] = parts;
+  const parts = token.split(".");
+
+  if (parts.length !== 2) {
+    return invalidToken();
+  }
+
+  const [encodedPayload, providedSignature] = parts;
 
   if (
     !encodedPayload
     || !providedSignature
+    || !BASE64URL_PATTERN.test(encodedPayload)
+    || !BASE64URL_PATTERN.test(providedSignature)
   ) {
-    throw new AuthServiceError(
-      "PASSWORD_RESET_TOKEN_INVALID",
-      "El token de recuperación no es válido.",
-      400,
+    return invalidToken();
+  }
+
+  let decodedPayload: Buffer;
+  let providedSignatureBuffer: Buffer;
+
+  try {
+    decodedPayload = Buffer.from(encodedPayload, "base64url");
+    providedSignatureBuffer = Buffer.from(
+      providedSignature,
+      "base64url",
     );
+  } catch {
+    return invalidToken();
+  }
+
+  if (
+    decodedPayload.length === 0
+    || decodedPayload.length > 1_024
+    || decodedPayload.toString("base64url") !== encodedPayload
+    || providedSignatureBuffer.length !== 32
+    || providedSignatureBuffer.toString("base64url")
+      !== providedSignature
+  ) {
+    decodedPayload.fill(0);
+    providedSignatureBuffer.fill(0);
+    return invalidToken();
   }
 
   const expectedSignature =
-    createResetTokenSignature(
-      encodedPayload,
-    );
-
-  const providedBuffer =
-    Buffer.from(
-      providedSignature,
-      "utf8",
-    );
-
-  const expectedBuffer =
-    Buffer.from(
-      expectedSignature,
-      "utf8",
-    );
-
-  if (
-    providedBuffer.length
-      !== expectedBuffer.length
-    || !timingSafeEqual(
-      providedBuffer,
-      expectedBuffer,
-    )
-  ) {
-    throw new AuthServiceError(
-      "PASSWORD_RESET_TOKEN_INVALID",
-      "El token de recuperación no es válido.",
-      400,
-    );
-  }
-
-  let parsedPayload:
-    unknown;
+    createResetTokenSignature(encodedPayload);
+  const expectedSignatureBuffer =
+    Buffer.from(expectedSignature, "base64url");
 
   try {
-    parsedPayload =
-      JSON.parse(
-        Buffer.from(
-          encodedPayload,
-          "base64url",
-        ).toString(
-          "utf8",
-        ),
-      ) as unknown;
+    if (
+      providedSignatureBuffer.length
+        !== expectedSignatureBuffer.length
+      || !timingSafeEqual(
+        providedSignatureBuffer,
+        expectedSignatureBuffer,
+      )
+    ) {
+      return invalidToken();
+    }
+  } finally {
+    providedSignatureBuffer.fill(0);
+    expectedSignatureBuffer.fill(0);
+  }
+
+  let parsedPayload: unknown;
+
+  try {
+    parsedPayload = JSON.parse(
+      decodedPayload.toString("utf8"),
+    ) as unknown;
   } catch {
-    throw new AuthServiceError(
-      "PASSWORD_RESET_TOKEN_INVALID",
-      "El token de recuperación no es válido.",
-      400,
-    );
+    return invalidToken();
+  } finally {
+    decodedPayload.fill(0);
   }
 
   if (!isResetTokenPayload(parsedPayload)) {
-    throw new AuthServiceError(
-      "PASSWORD_RESET_TOKEN_INVALID",
-      "El token de recuperación no es válido.",
-      400,
-    );
+    return invalidToken();
   }
 
-  validateUuid(
-    parsedPayload.accountId,
-    "accountId",
-  );
+  validateUuid(parsedPayload.accountId, "accountId");
+
+  const normalizedCurrentDate = new Date(currentDate);
+
+  if (Number.isNaN(normalizedCurrentDate.getTime())) {
+    return invalidToken();
+  }
+
+  const maximumTokenLifetimeMs =
+    PASSWORD_RESET_TOKEN_TTL_MINUTES * 60_000;
 
   if (
-    !Number.isSafeInteger(
-      parsedPayload.passwordVersion,
-    )
-    || !Number.isSafeInteger(
-      parsedPayload.issuedAt,
-    )
-    || !Number.isSafeInteger(
-      parsedPayload.expiresAt,
-    )
-    || parsedPayload.expiresAt
-      <= parsedPayload.issuedAt
+    !Number.isSafeInteger(parsedPayload.passwordVersion)
+    || !Number.isSafeInteger(parsedPayload.issuedAt)
+    || !Number.isSafeInteger(parsedPayload.expiresAt)
+    || parsedPayload.passwordVersion <= 0
+    || parsedPayload.issuedAt <= 0
+    || parsedPayload.expiresAt <= parsedPayload.issuedAt
+    || parsedPayload.expiresAt - parsedPayload.issuedAt
+      > maximumTokenLifetimeMs
+    || parsedPayload.issuedAt
+      > normalizedCurrentDate.getTime()
+        + MAXIMUM_PASSWORD_RESET_TOKEN_CLOCK_SKEW_MS
   ) {
-    throw new AuthServiceError(
-      "PASSWORD_RESET_TOKEN_INVALID",
-      "El token de recuperación no es válido.",
-      400,
-    );
+    return invalidToken();
   }
 
   if (
     parsedPayload.expiresAt
-      <= Date.now()
+      <= normalizedCurrentDate.getTime()
   ) {
     throw new AuthServiceError(
       "PASSWORD_RESET_TOKEN_EXPIRED",
@@ -684,7 +718,11 @@ async function findLatestVerificationCode(
         created_at,
         expires_at,
         consumed_at
-      FROM dbo.auth_verification_codes
+      FROM dbo.auth_verification_codes${
+        transaction
+          ? " WITH (UPDLOCK, HOLDLOCK, ROWLOCK)"
+          : ""
+      }
       WHERE
         account_id = @accountId
         AND purpose = @purpose
@@ -876,8 +914,9 @@ async function issueVerificationCode(
 
 async function registerFailedCodeAttempt(
   verificationId: string,
+  currentDate = new Date(),
   transaction?: Transaction,
-): Promise<void> {
+): Promise<number> {
   const request =
     await createAuthRequest(
       transaction,
@@ -892,21 +931,40 @@ async function registerFailedCodeAttempt(
     ),
   );
 
-  await request.query(`
-    UPDATE dbo.auth_verification_codes
-    SET attempts_used =
-      attempts_used + 1
-    WHERE
-      verification_id = @verificationId
-      AND consumed_at IS NULL;
-  `);
+  request.input(
+    "currentDate",
+    DateTime2,
+    currentDate,
+  );
+
+  const result =
+    await request.query<{
+      attempts_used: number;
+    }>(`
+      UPDATE dbo.auth_verification_codes WITH (UPDLOCK, ROWLOCK)
+      SET attempts_used =
+        CASE
+          WHEN attempts_used < maximum_attempts
+            THEN attempts_used + 1
+          ELSE attempts_used
+        END
+      OUTPUT inserted.attempts_used
+      WHERE
+        verification_id = @verificationId
+        AND consumed_at IS NULL
+        AND expires_at > @currentDate;
+    `);
+
+  return result.recordset[0]
+    ?.attempts_used
+    ?? 0;
 }
 
 async function consumeVerificationCode(
   verificationId: string,
   consumedAt: Date,
   transaction?: Transaction,
-): Promise<void> {
+): Promise<boolean> {
   const request =
     await createAuthRequest(
       transaction,
@@ -927,13 +985,21 @@ async function consumeVerificationCode(
     consumedAt,
   );
 
-  await request.query(`
-    UPDATE dbo.auth_verification_codes
-    SET consumed_at = @consumedAt
-    WHERE
-      verification_id = @verificationId
-      AND consumed_at IS NULL;
-  `);
+  const result =
+    await request.query(`
+      UPDATE dbo.auth_verification_codes WITH (UPDLOCK, ROWLOCK)
+      SET consumed_at = @consumedAt
+      WHERE
+        verification_id = @verificationId
+        AND consumed_at IS NULL
+        AND expires_at > @consumedAt
+        AND attempts_used < maximum_attempts;
+    `);
+
+  return (
+    result.rowsAffected[0]
+    ?? 0
+  ) > 0;
 }
 
 function ensureAccountCanSignIn(
@@ -1033,48 +1099,84 @@ async function handleFailedSignIn(
   context: AuthRequestContext,
   currentDate: Date,
 ): Promise<void> {
-  const accountAlreadyLocked =
-    account.lockedUntil !== null
-    && account.lockedUntil.getTime()
-      > currentDate.getTime();
+  const failureState =
+    await withSqlTransaction(
+      async (transaction) => {
+        const currentAccount =
+          await findAccountById(
+            account.accountId,
+            transaction,
+          );
 
-  const canUpdateLockState =
-    account.status === "ACTIVE"
-    && account.emailVerifiedAt !== null
-    && !accountAlreadyLocked;
+        if (!currentAccount) {
+          return {
+            failedAttempts:
+              account.failedSignInAttempts,
 
-  const failedAttempts =
-    canUpdateLockState
-      ? account.failedSignInAttempts + 1
-      : account.failedSignInAttempts;
+            lockedUntil:
+              account.lockedUntil,
+          };
+        }
 
-  const lockedUntil =
-    canUpdateLockState
-    && failedAttempts
-      >= AUTH_ATTEMPT_RULES
-        .maximumSignInAttempts
-      ? new Date(
-          currentDate.getTime()
-          + AUTH_ATTEMPT_RULES
-            .accountLockMinutes
-            * 60_000,
-        )
-      : accountAlreadyLocked
-        ? account.lockedUntil
-        : null;
+        const accountAlreadyLocked =
+          currentAccount.lockedUntil !== null
+          && currentAccount.lockedUntil.getTime()
+            > currentDate.getTime();
 
-  if (canUpdateLockState) {
-    await updateFailedSignInState({
-      accountId:
-        account.accountId,
+        const canUpdateLockState =
+          currentAccount.status === "ACTIVE"
+          && currentAccount.emailVerifiedAt !== null
+          && !accountAlreadyLocked;
 
-      failedAttempts,
-      lockedUntil,
+        const failedAttempts =
+          canUpdateLockState
+            ? Math.min(
+                currentAccount.failedSignInAttempts + 1,
+                1_000,
+              )
+            : currentAccount.failedSignInAttempts;
 
-      updatedAt:
-        currentDate,
-    });
-  }
+        const lockedUntil =
+          canUpdateLockState
+          && failedAttempts
+            >= AUTH_ATTEMPT_RULES
+              .maximumSignInAttempts
+            ? new Date(
+                currentDate.getTime()
+                + AUTH_ATTEMPT_RULES
+                  .accountLockMinutes
+                  * 60_000,
+              )
+            : accountAlreadyLocked
+              ? currentAccount.lockedUntil
+              : null;
+
+        if (canUpdateLockState) {
+          await updateFailedSignInState(
+            {
+              accountId:
+                currentAccount.accountId,
+
+              failedAttempts,
+              lockedUntil,
+
+              updatedAt:
+                currentDate,
+            },
+            transaction,
+          );
+        }
+
+        return {
+          failedAttempts,
+          lockedUntil,
+        };
+      },
+      {
+        isolationLevel:
+          "SERIALIZABLE",
+      },
+    );
 
   await tryCreateAuthAuditEvent({
     eventId:
@@ -1103,10 +1205,11 @@ async function handleFailedSignIn(
       reason:
         "INVALID_CREDENTIALS",
 
-      failedAttempts,
+      failedAttempts:
+        failureState.failedAttempts,
 
       locked:
-        lockedUntil !== null,
+        failureState.lockedUntil !== null,
     },
 
     createdAt:
@@ -1129,6 +1232,13 @@ async function signInAccount(
     );
 
   if (!account) {
+    // Equilibra el coste con el camino de una cuenta existente para reducir
+    // la enumeración de correos mediante diferencias de tiempo.
+    await verifyPassword(
+      request.password,
+      DUMMY_PASSWORD_HASH,
+    );
+
     await tryCreateAuthAuditEvent({
       eventId:
         randomUUID(),
@@ -1188,99 +1298,172 @@ async function signInAccount(
     );
   }
 
-  ensureAccountCanSignIn(
-    account,
-    expectedRole,
-    currentDate,
-  );
+  try {
+    const result =
+      await withSqlTransaction(
+        async (transaction) => {
+          const lockedAccount =
+            await findAccountById(
+              account.accountId,
+              transaction,
+            );
 
-  if (
-    needsPasswordRehash(
-      account.passwordHash,
-    )
-  ) {
-    const replacementHash =
-      await hashPassword(
-        request.password,
-        account.role,
+          if (
+            !lockedAccount
+            || lockedAccount.passwordHash
+              !== account.passwordHash
+          ) {
+            throw new AuthServiceError(
+              "INVALID_CREDENTIALS",
+              "El correo o la contraseña son incorrectos.",
+              401,
+            );
+          }
+
+          ensureAccountCanSignIn(
+            lockedAccount,
+            expectedRole,
+            currentDate,
+          );
+
+          if (
+            needsPasswordRehash(
+              lockedAccount.passwordHash,
+            )
+          ) {
+            const replacementHash =
+              await hashPassword(
+                request.password,
+                lockedAccount.role,
+              );
+
+            const passwordUpdated =
+              await updateAccountPassword(
+                lockedAccount.accountId,
+                replacementHash,
+                currentDate,
+                transaction,
+              );
+
+            if (!passwordUpdated) {
+              throw new Error(
+                "No se pudo actualizar el hash de la contraseña.",
+              );
+            }
+          }
+
+          const signInRecorded =
+            await recordSuccessfulSignIn(
+              lockedAccount.accountId,
+              currentDate,
+              transaction,
+            );
+
+          if (!signInRecorded) {
+            throw new AuthServiceError(
+              "ACCOUNT_INACTIVE",
+              "La cuenta no se encuentra activa.",
+              403,
+            );
+          }
+
+          const createdSession =
+            await createAuthSession(
+              {
+                accountId:
+                  lockedAccount.accountId,
+
+                ipAddress:
+                  context.ipAddress,
+
+                userAgent:
+                  context.userAgent,
+
+                currentDate,
+              },
+              transaction,
+            );
+
+          await createAuthAuditEvent(
+            {
+              eventId:
+                randomUUID(),
+
+              accountId:
+                lockedAccount.accountId,
+
+              eventType:
+                expectedRole === "ADMIN"
+                  ? AUTH_AUDIT_EVENTS
+                      .adminSignInSucceeded
+                  : AUTH_AUDIT_EVENTS
+                      .userSignInSucceeded,
+
+              successful:
+                true,
+
+              ipAddress:
+                context.ipAddress,
+
+              userAgent:
+                context.userAgent,
+
+              createdAt:
+                currentDate,
+            },
+            transaction,
+          );
+
+          const refreshedAccount =
+            await findAccountById(
+              lockedAccount.accountId,
+              transaction,
+            );
+
+          return {
+            account:
+              refreshedAccount
+              ?? lockedAccount,
+
+            createdSession,
+          };
+        },
+        {
+          isolationLevel:
+            "SERIALIZABLE",
+        },
       );
 
-    await updateAccountPassword(
-      account.accountId,
-      replacementHash,
-      currentDate,
-    );
+    return {
+      account:
+        toAccountPublicRecord(
+          result.account,
+        ),
+
+      session: {
+        expiresAt:
+          result.createdSession
+            .session
+            .expiresAt
+            .toISOString(),
+
+        cookieHeader:
+          result.createdSession
+            .cookieHeader,
+      },
+    };
+  } catch (error) {
+    const nestedServiceError =
+      findNestedAuthServiceError(
+        error,
+      );
+
+    if (nestedServiceError) {
+      throw nestedServiceError;
+    }
+
+    throw error;
   }
-
-  await recordSuccessfulSignIn(
-    account.accountId,
-    currentDate,
-  );
-
-  const createdSession =
-    await createAuthSession({
-      accountId:
-        account.accountId,
-
-      ipAddress:
-        context.ipAddress,
-
-      userAgent:
-        context.userAgent,
-
-      currentDate,
-    });
-
-  await tryCreateAuthAuditEvent({
-    eventId:
-      randomUUID(),
-
-    accountId:
-      account.accountId,
-
-    eventType:
-      expectedRole === "ADMIN"
-        ? AUTH_AUDIT_EVENTS
-            .adminSignInSucceeded
-        : AUTH_AUDIT_EVENTS
-            .userSignInSucceeded,
-
-    successful:
-      true,
-
-    ipAddress:
-      context.ipAddress,
-
-    userAgent:
-      context.userAgent,
-
-    createdAt:
-      currentDate,
-  });
-
-  const refreshedAccount =
-    await findAccountById(
-      account.accountId,
-    );
-
-  return {
-    account:
-      toAccountPublicRecord(
-        refreshedAccount
-        ?? account,
-      ),
-
-    session: {
-      expiresAt:
-        createdSession
-          .session
-          .expiresAt
-          .toISOString(),
-
-      cookieHeader:
-        createdSession.cookieHeader,
-    },
-  };
 }
 
 async function createAvailableUsernameSuggestions(
@@ -1436,7 +1619,7 @@ export async function registerUser(
   if (!usernameAvailability.available) {
     throw new AuthServiceError(
       "USERNAME_UNAVAILABLE",
-      "El nombre de pila solicitado no está disponible.",
+      "El nombre de usuario solicitado no está disponible.",
       409,
     );
   }
@@ -1448,6 +1631,11 @@ export async function registerUser(
     await hashPassword(
       request.password,
       "USER",
+    );
+
+  const usernameNormalized =
+    normalizeUsername(
+      request.username,
     );
 
   const usernameSkeleton =
@@ -1467,110 +1655,69 @@ export async function registerUser(
   try {
     result =
       await withSqlTransaction(
-        async (
-          transaction,
-        ) => {
-          const accountRequest =
-            await createAuthRequest(
+        async (transaction) => {
+          const concurrentEmailAccount =
+            await findAccountByEmail(
+              request.email,
+              undefined,
               transaction,
             );
 
-          accountRequest.input(
-            "accountId",
-            UniqueIdentifier,
-            accountId,
-          );
-
-          accountRequest.input(
-            "firstNames",
-            VarChar(100),
-            request.firstNames,
-          );
-
-          accountRequest.input(
-            "lastNames",
-            VarChar(150),
-            request.lastNames,
-          );
-
-          accountRequest.input(
-            "username",
-            VarChar(40),
-            request.username,
-          );
-
-          accountRequest.input(
-            "usernameNormalized",
-            VarChar(40),
-            normalizeUsername(
-              request.username,
-            ),
-          );
-
-          accountRequest.input(
-            "usernameSkeleton",
-            VarChar(40),
-            usernameSkeleton,
-          );
-
-          accountRequest.input(
-            "email",
-            VarChar(320),
-            request.email,
-          );
-
-          accountRequest.input(
-            "passwordHash",
-            VarChar(512),
-            passwordHash,
-          );
-
-          accountRequest.input(
-            "createdAt",
-            DateTime2,
-            currentDate,
-          );
-
-          await accountRequest.query(`
-            INSERT INTO dbo.accounts (
-              account_id,
-              role,
-              status,
-              first_names,
-              last_names,
-              username,
-              username_normalized,
-              username_skeleton,
-              email,
-              email_normalized,
-              password_hash,
-              email_verified_at,
-              failed_sign_in_attempts,
-              locked_until,
-              created_at,
-              updated_at,
-              last_sign_in_at
-            )
-            VALUES (
-              @accountId,
-              'USER',
-              'PENDING_VERIFICATION',
-              @firstNames,
-              @lastNames,
-              @username,
-              @usernameNormalized,
-              @usernameSkeleton,
-              @email,
-              LOWER(@email),
-              @passwordHash,
-              NULL,
-              0,
-              NULL,
-              @createdAt,
-              @createdAt,
-              NULL
+          if (concurrentEmailAccount) {
+            throw new AuthServiceError(
+              "EMAIL_ALREADY_IN_USE",
+              "Ya existe una cuenta asociada a este correo electrónico.",
+              409,
             );
-          `);
+          }
+
+          const concurrentUsernameConflicts =
+            await findPotentialUsernameConflicts(
+              usernameNormalized,
+              usernameSkeleton,
+              100,
+              transaction,
+            );
+
+          if (
+            concurrentUsernameConflicts.some(
+              (conflict) =>
+                conflict.usernameNormalized
+                  === usernameNormalized
+                || areUsernamesConfusinglySimilar(
+                  request.username,
+                  conflict.username,
+                ),
+            )
+          ) {
+            throw new AuthServiceError(
+              "USERNAME_UNAVAILABLE",
+              "El nombre de usuario solicitado no está disponible.",
+              409,
+            );
+          }
+
+          await createPendingUserAccount(
+            {
+              accountId,
+              firstNames:
+                request.firstNames,
+              lastNames:
+                request.lastNames,
+              username:
+                request.username,
+              usernameNormalized,
+              usernameSkeleton,
+              email:
+                request.email,
+              emailNormalized:
+                request.email,
+              passwordHash,
+              createdAt:
+                currentDate,
+            },
+            transaction,
+          );
 
           const verification =
             await issueVerificationCode(
@@ -1681,7 +1828,7 @@ export async function registerUser(
     ) {
       throw new AuthServiceError(
         "DATABASE_CONFLICT",
-        "El correo electrónico o el nombre de pila ya está registrado.",
+        "El correo electrónico o el nombre de usuario ya está registrado.",
         409,
       );
     }
@@ -1885,184 +2032,244 @@ export async function verifyUserEmail(
   request: EmailVerificationRequest,
   context: AuthRequestContext = {},
 ): Promise<VerifyEmailResult> {
-  const account =
-    await findAccountById(
-      request.accountId,
-    );
-
-  if (!account) {
-    throw new AuthServiceError(
-      "ACCOUNT_NOT_FOUND",
-      "La cuenta solicitada no existe.",
-      404,
-    );
-  }
-
-  if (
-    account.emailVerifiedAt
-    && account.status === "ACTIVE"
-  ) {
-    return {
-      account:
-        toAccountPublicRecord(
-          account,
-        ),
-    };
-  }
-
   const currentDate =
     new Date();
 
-  const verification =
-    await findLatestVerificationCode(
-      account.accountId,
-      "EMAIL_VERIFICATION",
-    );
-
-  if (
-    !verification
-    || verification.consumed_at
-  ) {
-    throw new AuthServiceError(
-      "INVALID_VERIFICATION_CODE",
-      "El código de verificación no es válido.",
-      400,
-    );
-  }
-
-  if (
-    verification.expires_at
-      .getTime()
-      <= currentDate.getTime()
-  ) {
-    throw new AuthServiceError(
-      "VERIFICATION_CODE_EXPIRED",
-      "El código de verificación ha vencido.",
-      400,
-    );
-  }
-
-  if (
-    verification.attempts_used
-      >= verification.maximum_attempts
-  ) {
-    throw new AuthServiceError(
-      "VERIFICATION_ATTEMPTS_EXCEEDED",
-      "Se agotaron los intentos permitidos para este código.",
-      429,
-    );
-  }
-
-  const codeMatches =
-    verifyVerificationCodeHash(
-      request.code,
-      verification.code_hash,
-    );
-
-  if (!codeMatches) {
-    await registerFailedCodeAttempt(
-      verification.verification_id,
-    );
-
-    throw new AuthServiceError(
-      "INVALID_VERIFICATION_CODE",
-      "El código de verificación no es válido.",
-      400,
-    );
-  }
-
-  const verifiedAccount =
-    await withSqlTransaction(
-      async (
-        transaction,
-      ) => {
-        await consumeVerificationCode(
-          verification.verification_id,
-          currentDate,
+  try {
+    const result =
+      await withSqlTransaction(
+        async (
           transaction,
-        );
+        ) => {
+          const account =
+            await findAccountById(
+              request.accountId,
+              transaction,
+            );
 
-        const updatedAccount =
-          await markAccountEmailAsVerified(
-            account.accountId,
-            currentDate,
+          if (!account) {
+            return {
+              ok: false as const,
+
+              error:
+                new AuthServiceError(
+                  "ACCOUNT_NOT_FOUND",
+                  "La cuenta solicitada no existe.",
+                  404,
+                ),
+            };
+          }
+
+          if (
+            account.emailVerifiedAt
+            && account.status === "ACTIVE"
+          ) {
+            return {
+              ok: true as const,
+              account,
+            };
+          }
+
+          const verification =
+            await findLatestVerificationCode(
+              account.accountId,
+              "EMAIL_VERIFICATION",
+              transaction,
+            );
+
+          if (
+            !verification
+            || verification.consumed_at
+          ) {
+            return {
+              ok: false as const,
+
+              error:
+                new AuthServiceError(
+                  "INVALID_VERIFICATION_CODE",
+                  "El código de verificación no es válido.",
+                  400,
+                ),
+            };
+          }
+
+          if (
+            verification.expires_at
+              .getTime()
+              <= currentDate.getTime()
+          ) {
+            return {
+              ok: false as const,
+
+              error:
+                new AuthServiceError(
+                  "VERIFICATION_CODE_EXPIRED",
+                  "El código de verificación ha vencido.",
+                  400,
+                ),
+            };
+          }
+
+          if (
+            verification.attempts_used
+              >= verification.maximum_attempts
+          ) {
+            return {
+              ok: false as const,
+
+              error:
+                new AuthServiceError(
+                  "VERIFICATION_ATTEMPTS_EXCEEDED",
+                  "Se agotaron los intentos permitidos para este código.",
+                  429,
+                ),
+            };
+          }
+
+          if (
+            !verifyVerificationCodeHash(
+              request.code,
+              verification.code_hash,
+            )
+          ) {
+            await registerFailedCodeAttempt(
+              verification.verification_id,
+              currentDate,
+              transaction,
+            );
+
+            return {
+              ok: false as const,
+
+              error:
+                new AuthServiceError(
+                  "INVALID_VERIFICATION_CODE",
+                  "El código de verificación no es válido.",
+                  400,
+                ),
+            };
+          }
+
+          const consumed =
+            await consumeVerificationCode(
+              verification.verification_id,
+              currentDate,
+              transaction,
+            );
+
+          if (!consumed) {
+            return {
+              ok: false as const,
+
+              error:
+                new AuthServiceError(
+                  "INVALID_VERIFICATION_CODE",
+                  "El código de verificación no es válido.",
+                  400,
+                ),
+            };
+          }
+
+          const updatedAccount =
+            await markAccountEmailAsVerified(
+              account.accountId,
+              currentDate,
+              transaction,
+            );
+
+          if (!updatedAccount) {
+            throw new Error(
+              "No se pudo activar la cuenta.",
+            );
+          }
+
+          const notification =
+            AUTH_NOTIFICATION_KEYS
+              .userAccountCreated;
+
+          await createNotification(
+            {
+              notificationId:
+                randomUUID(),
+
+              accountId:
+                updatedAccount.accountId,
+
+              type:
+                notification.type,
+
+              titleKey:
+                notification.title,
+
+              messageKey:
+                notification.message,
+
+              createdAt:
+                currentDate,
+            },
             transaction,
           );
 
-        if (!updatedAccount) {
-          throw new Error(
-            "No se pudo activar la cuenta.",
+          await createAuthAuditEvent(
+            {
+              eventId:
+                randomUUID(),
+
+              accountId:
+                updatedAccount.accountId,
+
+              eventType:
+                AUTH_AUDIT_EVENTS
+                  .emailVerified,
+
+              successful:
+                true,
+
+              ipAddress:
+                context.ipAddress,
+
+              userAgent:
+                context.userAgent,
+
+              createdAt:
+                currentDate,
+            },
+            transaction,
           );
-        }
 
-        const notification =
-          AUTH_NOTIFICATION_KEYS
-            .userAccountCreated;
+          return {
+            ok: true as const,
+            account: updatedAccount,
+          };
+        },
+        {
+          isolationLevel:
+            "SERIALIZABLE",
+        },
+      );
 
-        await createNotification(
-          {
-            notificationId:
-              randomUUID(),
+    if (!result.ok) {
+      throw result.error;
+    }
 
-            accountId:
-              updatedAccount.accountId,
+    return {
+      account:
+        toAccountPublicRecord(
+          result.account,
+        ),
+    };
+  } catch (error) {
+    const nestedServiceError =
+      findNestedAuthServiceError(
+        error,
+      );
 
-            type:
-              notification.type,
+    if (nestedServiceError) {
+      throw nestedServiceError;
+    }
 
-            titleKey:
-              notification.title,
-
-            messageKey:
-              notification.message,
-
-            createdAt:
-              currentDate,
-          },
-          transaction,
-        );
-
-        await createAuthAuditEvent(
-          {
-            eventId:
-              randomUUID(),
-
-            accountId:
-              updatedAccount.accountId,
-
-            eventType:
-              AUTH_AUDIT_EVENTS
-                .emailVerified,
-
-            successful:
-              true,
-
-            ipAddress:
-              context.ipAddress,
-
-            userAgent:
-              context.userAgent,
-
-            createdAt:
-              currentDate,
-          },
-          transaction,
-        );
-
-        return updatedAccount;
-      },
-      {
-        isolationLevel:
-          "SERIALIZABLE",
-      },
-    );
-
-  return {
-    account:
-      toAccountPublicRecord(
-        verifiedAccount,
-      ),
-  };
+    throw toDatabaseError(error);
+  }
 }
 
 export async function signInUser(
@@ -2283,98 +2490,190 @@ export async function requestPasswordReset(
 export async function verifyPasswordResetCode(
   request: PasswordResetCodeVerificationRequest,
 ): Promise<PasswordResetCodeResult> {
-  const account =
-    await findAccountByEmail(
-      request.email,
-      request.accountRole,
-    );
-
-  if (!account) {
-    throw new AuthServiceError(
-      "INVALID_VERIFICATION_CODE",
-      "El código de verificación no es válido.",
-      400,
-    );
-  }
-
-  const verification =
-    await findLatestVerificationCode(
-      account.accountId,
-      "PASSWORD_RESET",
-    );
-
   const currentDate =
     new Date();
 
-  if (
-    !verification
-    || verification.consumed_at
-  ) {
-    throw new AuthServiceError(
-      "INVALID_VERIFICATION_CODE",
-      "El código de verificación no es válido.",
-      400,
-    );
+  try {
+    const result =
+      await withSqlTransaction(
+        async (
+          transaction,
+        ) => {
+          const account =
+            await findAccountByEmail(
+              request.email,
+              request.accountRole,
+              transaction,
+            );
+
+          if (
+            !account
+            || account.role !== request.accountRole
+            || account.status !== "ACTIVE"
+            || !account.emailVerifiedAt
+            || resolveAccountAccessState(
+              account,
+              currentDate,
+            ) !== "ACTIVE"
+          ) {
+            return {
+              ok: false as const,
+
+              error:
+                new AuthServiceError(
+                  "INVALID_VERIFICATION_CODE",
+                  "El código de verificación no es válido.",
+                  400,
+                ),
+            };
+          }
+
+          const verification =
+            await findLatestVerificationCode(
+              account.accountId,
+              "PASSWORD_RESET",
+              transaction,
+            );
+
+          if (
+            !verification
+            || verification.consumed_at
+          ) {
+            return {
+              ok: false as const,
+
+              error:
+                new AuthServiceError(
+                  "INVALID_VERIFICATION_CODE",
+                  "El código de verificación no es válido.",
+                  400,
+                ),
+            };
+          }
+
+          if (
+            verification.expires_at
+              .getTime()
+              <= currentDate.getTime()
+          ) {
+            return {
+              ok: false as const,
+
+              error:
+                new AuthServiceError(
+                  "VERIFICATION_CODE_EXPIRED",
+                  "El código de verificación ha vencido.",
+                  400,
+                ),
+            };
+          }
+
+          if (
+            verification.attempts_used
+              >= verification.maximum_attempts
+          ) {
+            return {
+              ok: false as const,
+
+              error:
+                new AuthServiceError(
+                  "VERIFICATION_ATTEMPTS_EXCEEDED",
+                  "Se agotaron los intentos permitidos para este código.",
+                  429,
+                ),
+            };
+          }
+
+          if (
+            !verifyVerificationCodeHash(
+              request.code,
+              verification.code_hash,
+            )
+          ) {
+            await registerFailedCodeAttempt(
+              verification.verification_id,
+              currentDate,
+              transaction,
+            );
+
+            return {
+              ok: false as const,
+
+              error:
+                new AuthServiceError(
+                  "INVALID_VERIFICATION_CODE",
+                  "El código de verificación no es válido.",
+                  400,
+                ),
+            };
+          }
+
+          const consumed =
+            await consumeVerificationCode(
+              verification.verification_id,
+              currentDate,
+              transaction,
+            );
+
+          if (!consumed) {
+            return {
+              ok: false as const,
+
+              error:
+                new AuthServiceError(
+                  "INVALID_VERIFICATION_CODE",
+                  "El código de verificación no es válido.",
+                  400,
+                ),
+            };
+          }
+
+          return {
+            ok: true as const,
+
+            token:
+              createPasswordResetToken(
+                account,
+                currentDate,
+              ),
+          };
+        },
+        {
+          isolationLevel:
+            "SERIALIZABLE",
+        },
+      );
+
+    if (!result.ok) {
+      throw result.error;
+    }
+
+    return result.token;
+  } catch (error) {
+    const nestedServiceError =
+      findNestedAuthServiceError(
+        error,
+      );
+
+    if (nestedServiceError) {
+      throw nestedServiceError;
+    }
+
+    throw toDatabaseError(error);
   }
-
-  if (
-    verification.expires_at
-      .getTime()
-      <= currentDate.getTime()
-  ) {
-    throw new AuthServiceError(
-      "VERIFICATION_CODE_EXPIRED",
-      "El código de verificación ha vencido.",
-      400,
-    );
-  }
-
-  if (
-    verification.attempts_used
-      >= verification.maximum_attempts
-  ) {
-    throw new AuthServiceError(
-      "VERIFICATION_ATTEMPTS_EXCEEDED",
-      "Se agotaron los intentos permitidos para este código.",
-      429,
-    );
-  }
-
-  if (
-    !verifyVerificationCodeHash(
-      request.code,
-      verification.code_hash,
-    )
-  ) {
-    await registerFailedCodeAttempt(
-      verification.verification_id,
-    );
-
-    throw new AuthServiceError(
-      "INVALID_VERIFICATION_CODE",
-      "El código de verificación no es válido.",
-      400,
-    );
-  }
-
-  await consumeVerificationCode(
-    verification.verification_id,
-    currentDate,
-  );
-
-  return createPasswordResetToken(
-    account,
-    currentDate,
-  );
 }
 
 export async function resetPassword(
   request: PasswordChangeRequest,
   context: AuthRequestContext = {},
 ): Promise<PasswordResetResult> {
+  const currentDate =
+    new Date();
+
   const payload =
     parsePasswordResetToken(
       request.resetToken,
+      currentDate,
     );
 
   const account =
@@ -2382,7 +2681,18 @@ export async function resetPassword(
       payload.accountId,
     );
 
-  if (!account) {
+  if (
+    !account
+    || account.role !== payload.accountRole
+    || account.updatedAt.getTime()
+      !== payload.passwordVersion
+    || account.status !== "ACTIVE"
+    || !account.emailVerifiedAt
+    || resolveAccountAccessState(
+      account,
+      currentDate,
+    ) !== "ACTIVE"
+  ) {
     throw new AuthServiceError(
       "PASSWORD_RESET_TOKEN_INVALID",
       "El token de recuperación no es válido.",
@@ -2390,125 +2700,141 @@ export async function resetPassword(
     );
   }
 
-  if (
-    account.role
-      !== payload.accountRole
-  ) {
-    throw new AuthServiceError(
-      "ROLE_MISMATCH",
-      "El token no corresponde al tipo de cuenta solicitado.",
-      400,
-    );
-  }
-
-  if (
-    account.updatedAt.getTime()
-      !== payload.passwordVersion
-  ) {
-    throw new AuthServiceError(
-      "PASSWORD_RESET_TOKEN_INVALID",
-      "El token de recuperación ya fue utilizado o dejó de ser válido.",
-      400,
-    );
-  }
-
-  const currentDate =
-    new Date();
-
   const passwordHash =
     await hashPassword(
       request.password,
       account.role,
     );
 
-  await withSqlTransaction(
-    async (
-      transaction,
-    ) => {
-      const updated =
-        await updateAccountPassword(
-          account.accountId,
-          passwordHash,
-          currentDate,
+  try {
+    const accountId =
+      await withSqlTransaction(
+        async (
           transaction,
-        );
+        ) => {
+          const lockedAccount =
+            await findAccountById(
+              payload.accountId,
+              transaction,
+            );
 
-      if (!updated) {
-        throw new Error(
-          "No se pudo actualizar la contraseña.",
-        );
-      }
+          if (
+            !lockedAccount
+            || lockedAccount.role !== payload.accountRole
+            || lockedAccount.updatedAt.getTime()
+              !== payload.passwordVersion
+            || lockedAccount.status !== "ACTIVE"
+            || !lockedAccount.emailVerifiedAt
+            || resolveAccountAccessState(
+              lockedAccount,
+              currentDate,
+            ) !== "ACTIVE"
+          ) {
+            throw new AuthServiceError(
+              "PASSWORD_RESET_TOKEN_INVALID",
+              "El token de recuperación ya fue utilizado o dejó de ser válido.",
+              400,
+            );
+          }
 
-      const notification =
-        AUTH_NOTIFICATION_KEYS
-          .passwordChanged;
+          const updated =
+            await updateAccountPassword(
+              lockedAccount.accountId,
+              passwordHash,
+              currentDate,
+              transaction,
+            );
 
-      await createNotification(
-        {
-          notificationId:
-            randomUUID(),
+          if (!updated) {
+            throw new Error(
+              "No se pudo actualizar la contraseña.",
+            );
+          }
 
-          accountId:
-            account.accountId,
-
-          type:
-            notification.type,
-
-          titleKey:
-            notification.title,
-
-          messageKey:
-            notification.message,
-
-          createdAt:
+          await revokeAllAccountSessions(
+            lockedAccount.accountId,
+            "PASSWORD_RESET",
             currentDate,
+            transaction,
+          );
+
+          const notification =
+            AUTH_NOTIFICATION_KEYS
+              .passwordChanged;
+
+          await createNotification(
+            {
+              notificationId:
+                randomUUID(),
+
+              accountId:
+                lockedAccount.accountId,
+
+              type:
+                notification.type,
+
+              titleKey:
+                notification.title,
+
+              messageKey:
+                notification.message,
+
+              createdAt:
+                currentDate,
+            },
+            transaction,
+          );
+
+          await createAuthAuditEvent(
+            {
+              eventId:
+                randomUUID(),
+
+              accountId:
+                lockedAccount.accountId,
+
+              eventType:
+                AUTH_AUDIT_EVENTS
+                  .passwordResetCompleted,
+
+              successful:
+                true,
+
+              ipAddress:
+                context.ipAddress,
+
+              userAgent:
+                context.userAgent,
+
+              createdAt:
+                currentDate,
+            },
+            transaction,
+          );
+
+          return lockedAccount.accountId;
         },
-        transaction,
+        {
+          isolationLevel:
+            "SERIALIZABLE",
+        },
       );
 
-      await createAuthAuditEvent(
-        {
-          eventId:
-            randomUUID(),
-
-          accountId:
-            account.accountId,
-
-          eventType:
-            AUTH_AUDIT_EVENTS
-              .passwordResetCompleted,
-
-          successful:
-            true,
-
-          ipAddress:
-            context.ipAddress,
-
-          userAgent:
-            context.userAgent,
-
-          createdAt:
-            currentDate,
-        },
-        transaction,
+    return {
+      accountId,
+    };
+  } catch (error) {
+    const nestedServiceError =
+      findNestedAuthServiceError(
+        error,
       );
-    },
-    {
-      isolationLevel:
-        "SERIALIZABLE",
-    },
-  );
 
-  await revokeAllAccountSessions(
-    account.accountId,
-    "PASSWORD_RESET",
-    currentDate,
-  );
+    if (nestedServiceError) {
+      throw nestedServiceError;
+    }
 
-  return {
-    accountId:
-      account.accountId,
-  };
+    throw toDatabaseError(error);
+  }
 }
 
 export function isAuthServiceError(

@@ -40,38 +40,51 @@ export function ApplicationBootstrap({
         !automaticAuthenticationEnabled
         || !preloaderCompleted
         || automaticAuthenticationHandledForCurrentLoad
-      ) {
-        return;
-      }
-
-      if (
-        status === "LOADING"
+        || status === "LOADING"
         || status === "ERROR"
       ) {
-        return;
+        return undefined;
       }
 
       /*
-       * La oportunidad de apertura automática queda consumida
-       * para esta carga completa, aunque ya exista una sesión
-       * o el panel haya sido abierto manualmente.
+       * Se programa la apertura fuera del cuerpo síncrono del efecto para
+       * evitar actualizaciones encadenadas durante el mismo ciclo de render.
+       * La oportunidad solamente se consume cuando la tarea llega a ejecutarse.
        */
-      automaticAuthenticationHandledForCurrentLoad =
-        true;
+      const timeoutIdentifier =
+        window.setTimeout(
+          () => {
+            if (
+              automaticAuthenticationHandledForCurrentLoad
+            ) {
+              return;
+            }
 
-      if (
-        authenticated
-        || panelOpen
-      ) {
-        return;
-      }
+            automaticAuthenticationHandledForCurrentLoad =
+              true;
 
-      openAuthentication({
-        view:
-          automaticAuthenticationView,
-      });
+            if (
+              authenticated
+              || panelOpen
+            ) {
+              return;
+            }
 
-      onAutomaticAuthenticationOpen?.();
+            openAuthentication({
+              view:
+                automaticAuthenticationView,
+            });
+
+            onAutomaticAuthenticationOpen?.();
+          },
+          0,
+        );
+
+      return () => {
+        window.clearTimeout(
+          timeoutIdentifier,
+        );
+      };
     },
     [
       automaticAuthenticationEnabled,

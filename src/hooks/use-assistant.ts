@@ -48,6 +48,64 @@ const ASSISTANT_AUTH_ACTIONS:
     "REQUEST_USERNAME_FOR_SUGGESTIONS",
   ];
 
+const MAXIMUM_STORED_SERIALIZED_LENGTH = 512 * 1024;
+const MAXIMUM_STORED_ASSISTANT_TEXT_LENGTH = 20_000;
+const MAXIMUM_STORED_IDENTIFIER_LENGTH = 200;
+const MAXIMUM_STORED_SOURCE_TITLE_LENGTH = 300;
+const MAXIMUM_STORED_SOURCE_HREF_LENGTH = 2_048;
+const MAXIMUM_TOOL_ITEMS = 5;
+
+const SENSITIVE_PASSWORD_PATTERN =
+  /\b(?:mi\s+)?(?:contrase(?:ñ|n)a|password)\s*(?:es|is|:|=)\s*\S+/iu;
+
+const SENSITIVE_VERIFICATION_CODE_PATTERN =
+  /\b(?:c[oó]digo|code|verification\s+code)\s*(?:es|is|:|=)\s*[A-Z0-9]{6}\b/iu;
+
+const SENSITIVE_TOKEN_PATTERN =
+  /\b(?:token|bearer|session|sesión|reset\s+token)\s*(?:es|is|:|=)?\s*[A-Za-z0-9._~-]{20,}\b/iu;
+
+const SENSITIVE_PAYMENT_PATTERN =
+  /\b(?:cvv|cvc|n[uú]mero\s+de\s+tarjeta|card\s+number)\s*(?:es|is|:|=)\s*\S+/iu;
+
+const SENSITIVE_PRIVATE_KEY_PATTERN =
+  /-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/iu;
+
+const SENSITIVE_AUTHORIZATION_PATTERN =
+  /\b(?:authorization|autorizaci[oó]n)\s*:\s*(?:bearer|basic)\s+\S+/iu;
+
+const SENSITIVE_JWT_PATTERN =
+  /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/u;
+
+function containsSensitiveInformation(value: string): boolean {
+  return (
+    SENSITIVE_PASSWORD_PATTERN.test(value)
+    || SENSITIVE_VERIFICATION_CODE_PATTERN.test(value)
+    || SENSITIVE_TOKEN_PATTERN.test(value)
+    || SENSITIVE_PAYMENT_PATTERN.test(value)
+    || SENSITIVE_PRIVATE_KEY_PATTERN.test(value)
+    || SENSITIVE_AUTHORIZATION_PATTERN.test(value)
+    || SENSITIVE_JWT_PATTERN.test(value)
+  );
+}
+
+function createSensitiveInformationWarning(
+  locale: "es" | "en",
+): AssistantMessage {
+  const translations: AssistantTranslations = {
+    es: "Por seguridad, el contenido privado no se envió ni se guardó. No compartas contraseñas, códigos de verificación, tokens de sesión, claves privadas ni datos bancarios.",
+    en: "For security, the private content was not sent or saved. Do not share passwords, verification codes, session tokens, private keys or banking information.",
+  };
+
+  return {
+    id: createAssistantMessageId("assistant"),
+    role: "assistant",
+    content: translations[locale],
+    translations,
+    createdAt: Date.now(),
+    status: "completed",
+  };
+}
+
 function createAssistantMessageId(
   prefix: AssistantRole,
 ): string {
@@ -106,8 +164,12 @@ function isAssistantTranslations(
   return (
     typeof value.es === "string"
     && value.es.trim().length > 0
+    && value.es.length <= MAXIMUM_STORED_ASSISTANT_TEXT_LENGTH
+    && !/[\0]/u.test(value.es)
     && typeof value.en === "string"
     && value.en.trim().length > 0
+    && value.en.length <= MAXIMUM_STORED_ASSISTANT_TEXT_LENGTH
+    && !/[\0]/u.test(value.en)
   );
 }
 
@@ -120,16 +182,28 @@ function isAssistantSource(
 
   const hasValidHref =
     value.href === undefined
-    || typeof value.href === "string";
+    || (
+      typeof value.href === "string"
+      && value.href.length > 0
+      && value.href.length <= MAXIMUM_STORED_SOURCE_HREF_LENGTH
+      && value.href.startsWith("/")
+      && !value.href.startsWith("//")
+      && !value.href.includes("\\")
+      && !/[\r\n\0]/u.test(value.href)
+    );
 
   return (
     typeof value.id === "string"
+    && value.id.trim().length > 0
+    && value.id.length <= MAXIMUM_STORED_IDENTIFIER_LENGTH
     && typeof value.title === "string"
+    && value.title.trim().length > 0
+    && value.title.length <= MAXIMUM_STORED_SOURCE_TITLE_LENGTH
     && typeof value.section === "string"
+    && value.section.length <= 100
     && hasValidHref
   );
 }
-
 function isAssistantAuthAction(
   value: unknown,
 ): value is AssistantAuthAction {
@@ -146,14 +220,15 @@ function isStringArray(
 ): value is readonly string[] {
   return (
     Array.isArray(value)
-    && value.every(
-      (item) =>
-        typeof item === "string"
-        && item.length > 0,
+    && value.length <= MAXIMUM_TOOL_ITEMS
+    && value.every((item) =>
+      typeof item === "string"
+      && item.trim().length > 0
+      && item.length <= 100
+      && !/[\0]/u.test(item),
     )
   );
 }
-
 function isAssistantToolPayload(
   value: unknown,
 ): value is AssistantToolPayload {
@@ -214,6 +289,7 @@ function isAssistantMessage(
     value.sources === undefined
     || (
       Array.isArray(value.sources)
+      && value.sources.length <= ASSISTANT_CONFIG.maxKnowledgeResults
       && value.sources.every(
         isAssistantSource,
       )
@@ -233,17 +309,17 @@ function isAssistantMessage(
 
   return (
     typeof value.id === "string"
-    && isAssistantRole(
-      value.role,
-    )
+    && value.id.trim().length > 0
+    && value.id.length <= MAXIMUM_STORED_IDENTIFIER_LENGTH
+    && isAssistantRole(value.role)
     && typeof value.content === "string"
+    && value.content.length <= MAXIMUM_STORED_ASSISTANT_TEXT_LENGTH
+    && !/[\0]/u.test(value.content)
     && typeof value.createdAt === "number"
-    && Number.isFinite(
-      value.createdAt,
-    )
-    && isAssistantMessageStatus(
-      value.status,
-    )
+    && Number.isFinite(value.createdAt)
+    && value.createdAt >= 0
+    && value.createdAt <= Date.now() + 300_000
+    && isAssistantMessageStatus(value.status)
     && hasValidSources
     && hasValidTranslations
     && hasValidTools
@@ -335,6 +411,26 @@ function sanitizeMessageForStorage(
   return sanitizedMessage;
 }
 
+function isSafeMessageForStorage(
+  message: AssistantMessage,
+): boolean {
+  if (containsSensitiveInformation(message.content)) {
+    return false;
+  }
+
+  if (
+    message.translations
+    && (
+      containsSensitiveInformation(message.translations.es)
+      || containsSensitiveInformation(message.translations.en)
+    )
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
 function createAccountStorageKey(
   accountId: string,
 ): string {
@@ -364,6 +460,11 @@ function readStoredMessages(
       return [];
     }
 
+    if (storedValue.length > MAXIMUM_STORED_SERIALIZED_LENGTH) {
+      window.localStorage.removeItem(storageKey);
+      return [];
+    }
+
     const parsedValue: unknown =
       JSON.parse(
         storedValue,
@@ -378,9 +479,9 @@ function readStoredMessages(
     }
 
     return limitStoredMessages(
-      parsedValue.filter(
-        isAssistantMessage,
-      ),
+      parsedValue
+        .filter(isAssistantMessage)
+        .filter(isSafeMessageForStorage),
     );
   } catch {
     return [];
@@ -399,17 +500,20 @@ function writeStoredMessages(
 
   try {
     const sanitizedMessages =
-      limitStoredMessages(
-        messages,
-      ).map(
-        sanitizeMessageForStorage,
-      );
+      limitStoredMessages(messages)
+        .filter(isSafeMessageForStorage)
+        .map(sanitizeMessageForStorage);
+
+    const serializedMessages = JSON.stringify(sanitizedMessages);
+
+    if (serializedMessages.length > MAXIMUM_STORED_SERIALIZED_LENGTH) {
+      window.localStorage.removeItem(storageKey);
+      return;
+    }
 
     window.localStorage.setItem(
       storageKey,
-      JSON.stringify(
-        sanitizedMessages,
-      ),
+      serializedMessages,
     );
   } catch {
     // El asistente continúa aunque localStorage falle.
@@ -1129,34 +1233,43 @@ export function useAssistant():
           return;
         }
 
+        if (containsSensitiveInformation(normalizedMessage)) {
+          const warningMessage =
+            createSensitiveInformationWarning(locale);
+
+          setMessages((currentMessages) =>
+            limitStoredMessages([
+              ...currentMessages,
+              warningMessage,
+            ]),
+          );
+
+          setError(null);
+          setIsLoading(false);
+
+          return;
+        }
+
         const history =
           messages
-            .filter(
-              (
-                storedMessage,
-              ) =>
-                storedMessage.status === "completed",
+            .filter((storedMessage) =>
+              storedMessage.status === "completed",
             )
-            .slice(
-              -ASSISTANT_CONFIG.maxHistoryMessages,
+            .map((storedMessage) => ({
+              role: storedMessage.role,
+              content:
+                storedMessage.role === "assistant"
+                  ? storedMessage.translations?.[locale]
+                    ?? storedMessage.content
+                  : storedMessage.content,
+            }))
+            .filter((historyMessage) =>
+              historyMessage.content.trim().length > 0
+              && historyMessage.content.length
+                <= ASSISTANT_CONFIG.maxHistoryMessageLength
+              && !containsSensitiveInformation(historyMessage.content),
             )
-            .map(
-              (
-                storedMessage,
-              ) => ({
-                role:
-                  storedMessage.role,
-
-                content:
-                  storedMessage.role === "assistant"
-                    ? storedMessage
-                        .translations?.[
-                          locale
-                        ]
-                      ?? storedMessage.content
-                    : storedMessage.content,
-              }),
-            );
+            .slice(-ASSISTANT_CONFIG.maxHistoryMessages);
 
         const userMessage:
           AssistantMessage = {

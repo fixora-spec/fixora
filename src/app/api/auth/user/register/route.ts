@@ -1,4 +1,6 @@
-import { NextResponse } from "next/server";
+import type {
+  NextResponse,
+} from "next/server";
 
 import {
   AUTH_RATE_LIMIT_ACTIONS,
@@ -33,6 +35,7 @@ import {
 import {
   isJsonBodyError,
   parseJsonBody,
+  type JsonBodyError,
 } from "@/lib/http/parse-json-body";
 
 import {
@@ -49,158 +52,135 @@ import type {
   Locale,
 } from "@/types/locale";
 
-export const runtime =
-  "nodejs";
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-export const dynamic =
-  "force-dynamic";
+const BODY_LIMIT_BYTES = Math.min(
+  AUTH_REQUEST_LIMITS.maximumJsonBodyBytes,
+  16_384,
+);
 
-const REGISTRATION_BODY_LIMIT_BYTES =
-  Math.min(
-    AUTH_REQUEST_LIMITS
-      .maximumJsonBodyBytes,
+const UNKNOWN_IP_IDENTIFIER = "unknown";
 
-    16_384,
-  );
-
-type LocalizedMessages = {
-  forbiddenOrigin:
-    string;
-
-  invalidRequest:
-    string;
-
-  rateLimited:
-    string;
-
-  emailAlreadyRegistered:
-    string;
-
-  usernameUnavailable:
-    string;
-
-  emailDeliveryFailed:
-    string;
-
-  databaseConflict:
-    string;
-
-  internalError:
-    string;
+type Messages = {
+  forbiddenOrigin: string;
+  invalidContentType: string;
+  requestTooLarge: string;
+  invalidJson: string;
+  invalidRequest: string;
+  rateLimited: string;
+  emailAlreadyRegistered: string;
+  usernameUnavailable: string;
+  emailDeliveryFailed: string;
+  databaseConflict: string;
+  internalError: string;
 };
 
-function resolveRequestLocale(
+function resolveLocale(
   request: Request,
   body?: unknown,
 ): Locale {
   if (
     typeof body === "object"
     && body !== null
-    && !Array.isArray(
-      body,
-    )
+    && !Array.isArray(body)
     && "locale" in body
-    && (
-      body.locale === "es"
-      || body.locale === "en"
-    )
+    && (body.locale === "es" || body.locale === "en")
   ) {
     return body.locale;
   }
 
-  const headerLocale =
-    request.headers
-      .get(
-        "x-fixora-locale",
-      )
-      ?.trim()
-      .toLowerCase();
+  const explicitLocale = request.headers
+    .get("x-fixora-locale")
+    ?.trim()
+    .toLowerCase();
 
-  if (
-    headerLocale === "en"
-  ) {
+  if (explicitLocale === "en") {
     return "en";
   }
 
   return request.headers
-    .get(
-      "accept-language",
-    )
-    ?.toLowerCase()
-    .startsWith(
-      "en",
-    )
+    .get("accept-language")
+    ?.trim()
+    .toLowerCase()
+    .startsWith("en")
     ? "en"
     : "es";
 }
 
-function getMessages(
-  locale: Locale,
-): LocalizedMessages {
-  if (
-    locale === "en"
-  ) {
+function getMessages(locale: Locale): Messages {
+  if (locale === "en") {
     return {
-      forbiddenOrigin:
-        "The request origin is not allowed.",
-
+      forbiddenOrigin: "The request origin is not allowed.",
+      invalidContentType:
+        "The request must use an uncompressed JSON body.",
+      requestTooLarge: "The request body is too large.",
+      invalidJson: "The request body does not contain valid JSON.",
       invalidRequest:
         "Review the registration information and try again.",
-
       rateLimited:
         "Too many registration requests were made. Please wait before trying again.",
-
       emailAlreadyRegistered:
         "An account already exists for this email address.",
-
       usernameUnavailable:
         "The requested username is not available.",
-
       emailDeliveryFailed:
         "The verification email could not be delivered. Please try again.",
-
       databaseConflict:
         "The email address or username is already registered.",
-
       internalError:
         "The account could not be registered at this time.",
     };
   }
 
   return {
-    forbiddenOrigin:
-      "El origen de la solicitud no está permitido.",
-
+    forbiddenOrigin: "El origen de la solicitud no está permitido.",
+    invalidContentType:
+      "La solicitud debe utilizar un cuerpo JSON sin compresión.",
+    requestTooLarge: "El contenido de la solicitud es demasiado grande.",
+    invalidJson: "El contenido de la solicitud no contiene un JSON válido.",
     invalidRequest:
       "Revisa la información del registro e inténtalo nuevamente.",
-
     rateLimited:
       "Se realizaron demasiadas solicitudes de registro. Espera antes de intentarlo nuevamente.",
-
     emailAlreadyRegistered:
       "Ya existe una cuenta asociada a este correo electrónico.",
-
     usernameUnavailable:
-      "El nombre de pila solicitado no está disponible.",
-
+      "El nombre de usuario solicitado no está disponible.",
     emailDeliveryFailed:
       "No se pudo entregar el correo de verificación. Inténtalo nuevamente.",
-
     databaseConflict:
-      "El correo electrónico o el nombre de pila ya está registrado.",
-
+      "El correo electrónico o el nombre de usuario ya está registrado.",
     internalError:
       "No se pudo registrar la cuenta en este momento.",
   };
 }
 
+function getJsonBodyErrorMessage(
+  error: JsonBodyError,
+  messages: Messages,
+): string {
+  if (error.status === 415) {
+    return messages.invalidContentType;
+  }
+
+  switch (error.code) {
+    case "BODY_TOO_LARGE":
+      return messages.requestTooLarge;
+
+    case "INVALID_JSON":
+      return messages.invalidJson;
+
+    case "INVALID_REQUEST":
+    default:
+      return messages.invalidRequest;
+  }
+}
+
 function mapServiceErrorCode(
-  code:
-    AuthServiceErrorCode,
+  code: AuthServiceErrorCode,
 ): AuthErrorCode {
-  switch (
-    code
-  ) {
+  switch (code) {
     case "EMAIL_ALREADY_IN_USE":
       return "EMAIL_ALREADY_REGISTERED";
 
@@ -219,331 +199,198 @@ function mapServiceErrorCode(
 }
 
 function getServiceErrorMessage(
-  code:
-    AuthServiceErrorCode,
-
-  messages:
-    LocalizedMessages,
+  code: AuthServiceErrorCode,
+  messages: Messages,
 ): string {
-  switch (
-    code
-  ) {
+  switch (code) {
     case "EMAIL_ALREADY_IN_USE":
-      return messages
-        .emailAlreadyRegistered;
+      return messages.emailAlreadyRegistered;
 
     case "USERNAME_UNAVAILABLE":
-      return messages
-        .usernameUnavailable;
+      return messages.usernameUnavailable;
 
     case "DATABASE_CONFLICT":
-      return messages
-        .databaseConflict;
+      return messages.databaseConflict;
 
     case "EMAIL_DELIVERY_FAILED":
-      return messages
-        .emailDeliveryFailed;
+      return messages.emailDeliveryFailed;
 
     default:
-      return messages
-        .internalError;
+      return messages.internalError;
   }
-}
-
-function getRegistrationRateLimitIdentifier(
-  request: Request,
-): string {
-  const ipAddress =
-    getRequestIpAddress(
-      request,
-    );
-
-  if (
-    ipAddress
-  ) {
-    return `ip:${ipAddress}`;
-  }
-
-  const userAgent =
-    getRequestUserAgent(
-      request,
-    )
-    ?? "unknown";
-
-  return [
-    "no-ip",
-    new URL(
-      request.url,
-    ).origin,
-    userAgent,
-  ].join(
-    ":",
-  );
 }
 
 function createValidationResponse(
-  locale:
-    Locale,
-
-  fieldErrors:
-    readonly AuthFieldError[],
+  locale: Locale,
+  fieldErrors: readonly AuthFieldError[],
 ): NextResponse {
-  const messages =
-    getMessages(
-      locale,
-    );
-
   return createApiErrorResponse({
-    status:
-      400,
-
-    code:
-      "VALIDATION_ERROR",
-
-    message:
-      messages.invalidRequest,
-
+    status: 400,
+    code: "VALIDATION_ERROR",
+    message: getMessages(locale).invalidRequest,
     fieldErrors,
   });
+}
+
+function getRateLimitIdentifiers(
+  request: Request,
+  email: string,
+): readonly string[] {
+  const ipAddress = getRequestIpAddress(request) ?? UNKNOWN_IP_IDENTIFIER;
+
+  return [
+    `ip:${ipAddress}`,
+    `account:USER:${email}`,
+  ];
+}
+
+async function consumeRegistrationLimits(
+  identifiers: readonly string[],
+): Promise<{
+  allowed: boolean;
+  retryAfterSeconds: number;
+}> {
+  let retryAfterSeconds = 0;
+
+  for (const identifier of identifiers) {
+    const result = await consumeDefaultAuthRateLimit(
+      AUTH_RATE_LIMIT_ACTIONS.userRegistration,
+      identifier,
+    );
+
+    if (!result.allowed) {
+      retryAfterSeconds = Math.max(
+        retryAfterSeconds,
+        result.retryAfterSeconds,
+      );
+    }
+  }
+
+  return {
+    allowed: retryAfterSeconds === 0,
+    retryAfterSeconds,
+  };
 }
 
 export async function POST(
   request: Request,
 ): Promise<NextResponse> {
-  const fallbackLocale =
-    resolveRequestLocale(
-      request,
-    );
+  const fallbackLocale = resolveLocale(request);
 
   try {
-    verifyRequestOrigin(
-      request,
-    );
+    verifyRequestOrigin(request);
   } catch (error) {
-    if (
-      isRequestOriginError(
-        error,
-      )
-    ) {
+    if (isRequestOriginError(error)) {
       return createApiErrorResponse({
-        status:
-          error.status,
-
-        code:
-          error.code,
-
-        message:
-          getMessages(
-            fallbackLocale,
-          ).forbiddenOrigin,
+        status: error.status,
+        code: error.code,
+        message: getMessages(fallbackLocale).forbiddenOrigin,
       });
     }
 
     return createApiErrorResponse({
-      status:
-        500,
-
-      code:
-        "INTERNAL_ERROR",
-
-      message:
-        getMessages(
-          fallbackLocale,
-        ).internalError,
+      status: 500,
+      code: "INTERNAL_ERROR",
+      message: getMessages(fallbackLocale).internalError,
     });
   }
 
-  let body:
-    unknown;
+  let body: unknown;
 
   try {
-    body =
-      await parseJsonBody(
-        request,
-        {
-          maximumBytes:
-            REGISTRATION_BODY_LIMIT_BYTES,
-
-          requireObject:
-            true,
-        },
-      );
+    body = await parseJsonBody(request, {
+      maximumBytes: BODY_LIMIT_BYTES,
+      requireObject: true,
+    });
   } catch (error) {
-    if (
-      isJsonBodyError(
-        error,
-      )
-    ) {
+    if (isJsonBodyError(error)) {
       return createApiErrorResponse({
-        status:
-          error.status,
-
-        code:
-          error.code,
-
-        message:
-          error.message,
-      });
-    }
-
-    return createApiErrorResponse({
-      status:
-        500,
-
-      code:
-        "INTERNAL_ERROR",
-
-      message:
-        getMessages(
-          fallbackLocale,
-        ).internalError,
-    });
-  }
-
-  const locale =
-    resolveRequestLocale(
-      request,
-      body,
-    );
-
-  const messages =
-    getMessages(
-      locale,
-    );
-
-  let input:
-    ReturnType<
-      typeof validateUserRegistrationRequest
-    >;
-
-  try {
-    input =
-      validateUserRegistrationRequest(
-        body,
-      );
-  } catch (error) {
-    if (
-      isAuthValidationError(
-        error,
-      )
-    ) {
-      return createValidationResponse(
-        locale,
-        error.fieldErrors,
-      );
-    }
-
-    return createApiErrorResponse({
-      status:
-        500,
-
-      code:
-        "INTERNAL_ERROR",
-
-      message:
-        messages.internalError,
-    });
-  }
-
-  try {
-    const rateLimit =
-      await consumeDefaultAuthRateLimit(
-        AUTH_RATE_LIMIT_ACTIONS
-          .userRegistration,
-
-        getRegistrationRateLimitIdentifier(
-          request,
+        status: error.status,
+        code: error.code,
+        message: getJsonBodyErrorMessage(
+          error,
+          getMessages(fallbackLocale),
         ),
-      );
-
-    if (
-      !rateLimit.allowed
-    ) {
-      return createApiErrorResponse({
-        status:
-          429,
-
-        code:
-          "RATE_LIMITED",
-
-        message:
-          messages.rateLimited,
-
-        retryAfterSeconds:
-          Math.max(
-            1,
-            rateLimit
-              .retryAfterSeconds,
-          ),
       });
     }
 
-    const result =
-      await registerUser(
-        input,
-        {
-          ipAddress:
-            getRequestIpAddress(
-              request,
-            ),
+    return createApiErrorResponse({
+      status: 500,
+      code: "INTERNAL_ERROR",
+      message: getMessages(fallbackLocale).internalError,
+    });
+  }
 
-          userAgent:
-            getRequestUserAgent(
-              request,
-            ),
-        },
-      );
+  const locale = resolveLocale(request, body);
+  const messages = getMessages(locale);
 
-    return createApiSuccessResponse(
-      result,
-      {
-        status:
-          201,
-      },
-    );
+  let input: ReturnType<typeof validateUserRegistrationRequest>;
+
+  try {
+    input = validateUserRegistrationRequest(body);
   } catch (error) {
-    if (
-      isAuthServiceError(
-        error,
-      )
-    ) {
+    if (isAuthValidationError(error)) {
+      return createValidationResponse(locale, error.fieldErrors);
+    }
+
+    return createApiErrorResponse({
+      status: 500,
+      code: "INTERNAL_ERROR",
+      message: messages.internalError,
+    });
+  }
+
+  const rateLimitIdentifiers = getRateLimitIdentifiers(
+    request,
+    input.email,
+  );
+
+  try {
+    const rateLimit = await consumeRegistrationLimits(
+      rateLimitIdentifiers,
+    );
+
+    if (!rateLimit.allowed) {
       return createApiErrorResponse({
-        status:
-          error.status,
+        status: 429,
+        code: "RATE_LIMITED",
+        message: messages.rateLimited,
+        retryAfterSeconds: Math.max(
+          1,
+          rateLimit.retryAfterSeconds,
+        ),
+      });
+    }
 
-        code:
-          mapServiceErrorCode(
-            error.code,
-          ),
+    const result = await registerUser(input, {
+      ipAddress: getRequestIpAddress(request),
+      userAgent: getRequestUserAgent(request),
+    });
 
-        message:
-          getServiceErrorMessage(
-            error.code,
-            messages,
-          ),
-
+    return createApiSuccessResponse(result, {
+      status: 201,
+    });
+  } catch (error) {
+    if (isAuthServiceError(error)) {
+      return createApiErrorResponse({
+        status: error.status,
+        code: mapServiceErrorCode(error.code),
+        message: getServiceErrorMessage(error.code, messages),
         ...(error.retryAfterSeconds
           ? {
-              retryAfterSeconds:
-                Math.max(
-                  1,
-                  error
-                    .retryAfterSeconds,
-                ),
+              retryAfterSeconds: Math.max(
+                1,
+                error.retryAfterSeconds,
+              ),
             }
           : {}),
       });
     }
 
     return createApiErrorResponse({
-      status:
-        500,
-
-      code:
-        "INTERNAL_ERROR",
-
-      message:
-        messages.internalError,
+      status: 500,
+      code: "INTERNAL_ERROR",
+      message: messages.internalError,
     });
   }
 }

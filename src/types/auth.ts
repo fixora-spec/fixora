@@ -1,16 +1,17 @@
 import type {
-  AccountIdentity,
   AccountRole,
+  AccountStatus,
 } from "@/types/account";
 
-import type { Locale } from "@/types/locale";
+import type {
+  Locale,
+} from "@/types/locale";
 
 export const AUTH_VIEWS = [
   "USER_SIGN_IN",
-  "USER_REGISTER",
+  "USER_REGISTRATION",
   "EMAIL_VERIFICATION",
   "PASSWORD_RECOVERY",
-  "PASSWORD_CODE_VERIFICATION",
   "PASSWORD_RESET",
   "ADMIN_SIGN_IN",
 ] as const;
@@ -48,6 +49,23 @@ export type AuthRequestContext = {
   userAgent: string | null;
 };
 
+export type AuthAccountIdentity = {
+  accountId: string;
+
+  role: AccountRole;
+  status: AccountStatus;
+
+  firstNames: string;
+  lastNames: string;
+
+  username: string;
+  email: string;
+
+  emailVerifiedAt: string | null;
+  createdAt: string;
+  lastSignInAt: string | null;
+};
+
 export type UserRegistrationRequest = {
   firstNames: string;
   lastNames: string;
@@ -63,7 +81,6 @@ export type UserRegistrationResult = {
   email: string;
   username: string;
 
-  verificationRequired: true;
   verificationExpiresAt: string;
   resendAvailableAt: string;
 };
@@ -75,8 +92,7 @@ export type EmailVerificationRequest = {
 };
 
 export type EmailVerificationResult = {
-  verified: true;
-  account: AccountIdentity;
+  account: AuthAccountIdentity;
 };
 
 export type SignInRequest = {
@@ -92,22 +108,30 @@ export type AdminSignInRequest =
   SignInRequest;
 
 export type SignInResult = {
-  authenticated: true;
-  account: AccountIdentity;
-  sessionExpiresAt: string;
+  account: AuthAccountIdentity;
+
+  session: {
+    expiresAt: string;
+  };
 };
 
 export type UsernameAvailabilityRequest = {
   username: string;
 };
 
+export type UsernameAvailabilityReason =
+  | "TAKEN"
+  | "TOO_SIMILAR"
+  | "INVALID"
+  | null;
+
 export type UsernameAvailabilityResult = {
   username: string;
   normalizedUsername: string;
 
   available: boolean;
-  exactMatchExists: boolean;
-  similarMatchExists: boolean;
+  reason: UsernameAvailabilityReason;
+  suggestions: readonly string[];
 };
 
 export type UsernameSuggestionsRequest = {
@@ -121,8 +145,7 @@ export type UsernameSuggestion = {
 };
 
 export type UsernameSuggestionsResult = {
-  requestedUsername: string;
-  suggestions: readonly UsernameSuggestion[];
+  suggestions: readonly string[];
 };
 
 export type VerificationPurpose =
@@ -137,8 +160,11 @@ export type ResendVerificationRequest = {
 };
 
 export type ResendVerificationResult = {
-  sent: true;
-  expiresAt: string;
+  accountId: string;
+  username: string;
+  email: string;
+
+  verificationExpiresAt: string;
   resendAvailableAt: string;
 };
 
@@ -150,6 +176,8 @@ export type PasswordResetRequest = {
 
 export type PasswordResetRequestResult = {
   accepted: true;
+  expiresAt: string | null;
+  resendAvailableAt: string | null;
 };
 
 export type PasswordResetCodeVerificationRequest = {
@@ -160,9 +188,8 @@ export type PasswordResetCodeVerificationRequest = {
 };
 
 export type PasswordResetCodeVerificationResult = {
-  verified: true;
   resetToken: string;
-  resetTokenExpiresAt: string;
+  expiresAt: string;
 };
 
 export type PasswordChangeRequest = {
@@ -173,27 +200,24 @@ export type PasswordChangeRequest = {
 };
 
 export type PasswordChangeResult = {
-  changed: true;
+  accountId: string;
 };
 
 export type SignOutResult = {
   signedOut: true;
+  message?: string;
 };
 
 export type AuthenticatedSession = {
   authenticated: true;
-  account: AccountIdentity;
-
-  session: {
-    expiresAt: string;
-    lastSeenAt: string;
-  };
+  account: AuthAccountIdentity;
+  expiresAt: string;
 };
 
 export type AnonymousSession = {
   authenticated: false;
   account: null;
-  session: null;
+  expiresAt: null;
 };
 
 export type AuthSession =
@@ -250,7 +274,11 @@ export type AuthFieldName =
   | "email"
   | "password"
   | "passwordConfirmation"
-  | "code";
+  | "code"
+  | "accountId"
+  | "accountRole"
+  | "locale"
+  | "resetToken";
 
 export type AuthFieldError = {
   field: AuthFieldName;
@@ -278,6 +306,11 @@ export type AuthApiResponse<TData> =
   | AuthApiSuccess<TData>
   | AuthApiError;
 
+/*
+ * Tipos heredados del primer proveedor de autenticación. Se conservan para
+ * compatibilidad, pero el token de recuperación debe permanecer solamente en
+ * memoria y nunca persistirse en localStorage o sessionStorage.
+ */
 export type AuthPanelState = {
   isOpen: boolean;
   view: AuthView;

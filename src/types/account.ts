@@ -1,17 +1,17 @@
-export const ACCOUNT_ROLES = [
+export const ACCOUNT_ROLES = Object.freeze([
   "USER",
   "ADMIN",
-] as const;
+] as const);
 
 export type AccountRole =
   (typeof ACCOUNT_ROLES)[number];
 
-export const ACCOUNT_STATUSES = [
+export const ACCOUNT_STATUSES = Object.freeze([
   "PENDING_VERIFICATION",
   "ACTIVE",
   "DISABLED",
   "LOCKED",
-] as const;
+] as const);
 
 export type AccountStatus =
   (typeof ACCOUNT_STATUSES)[number];
@@ -70,14 +70,44 @@ export type PendingVerificationAccount =
     emailVerifiedAt: null;
   };
 
+const ACCOUNT_ROLE_SET: ReadonlySet<string> =
+  new Set(ACCOUNT_ROLES);
+
+const ACCOUNT_STATUS_SET: ReadonlySet<string> =
+  new Set(ACCOUNT_STATUSES);
+
+const ACCOUNT_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+
+function isValidIsoDateString(value: unknown): value is string {
+  if (
+    typeof value !== "string"
+    || value.length < 20
+    || value.length > 35
+  ) {
+    return false;
+  }
+
+  const time = Date.parse(value);
+
+  return Number.isFinite(time);
+}
+
+export function isAccountId(
+  value: unknown,
+): value is AccountId {
+  return (
+    typeof value === "string"
+    && ACCOUNT_ID_PATTERN.test(value)
+  );
+}
+
 export function isAccountRole(
   value: unknown,
 ): value is AccountRole {
   return (
     typeof value === "string"
-    && ACCOUNT_ROLES.includes(
-      value as AccountRole,
-    )
+    && ACCOUNT_ROLE_SET.has(value)
   );
 }
 
@@ -86,9 +116,7 @@ export function isAccountStatus(
 ): value is AccountStatus {
   return (
     typeof value === "string"
-    && ACCOUNT_STATUSES.includes(
-      value as AccountStatus,
-    )
+    && ACCOUNT_STATUS_SET.has(value)
   );
 }
 
@@ -97,6 +125,6 @@ export function isActiveAccount(
 ): account is ActiveAccount {
   return (
     account.status === "ACTIVE"
-    && typeof account.emailVerifiedAt === "string"
+    && isValidIsoDateString(account.emailVerifiedAt)
   );
 }

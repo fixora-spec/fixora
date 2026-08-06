@@ -21,28 +21,29 @@ export type EmailDeliveryResult = {
   response: string;
 };
 
-type SmtpTransporter =
-  ReturnType<
-    typeof nodemailer.createTransport
-  >;
+type SmtpTransporter = ReturnType<
+  typeof nodemailer.createTransport
+>;
 
-const MAXIMUM_SUBJECT_LENGTH =
-  200;
+type NormalizedEmailMessage = {
+  to: string;
+  subject: string;
+  text: string;
+  html?: string;
+};
 
-const MAXIMUM_TEXT_LENGTH =
-  20_000;
+type UnknownRecord = Record<string, unknown>;
 
-const MAXIMUM_HTML_LENGTH =
-  50_000;
+const MAXIMUM_RECIPIENT_LENGTH = 320;
+const MAXIMUM_SUBJECT_LENGTH = 200;
+const MAXIMUM_TEXT_LENGTH = 20_000;
+const MAXIMUM_HTML_LENGTH = 50_000;
+const MAXIMUM_TRANSPORT_VALUE_LENGTH = 1_000;
 
-let cachedSmtpTransporter:
-  | SmtpTransporter
-  | null = null;
+let cachedSmtpTransporter: SmtpTransporter | null = null;
 
-export class EmailDeliveryError
-  extends Error {
-  public readonly cause:
-    unknown;
+export class EmailDeliveryError extends Error {
+  public readonly cause: unknown;
 
   public constructor(
     message: string,
@@ -50,40 +51,99 @@ export class EmailDeliveryError
   ) {
     super(message);
 
-    this.name =
-      "EmailDeliveryError";
+    this.name = "EmailDeliveryError";
+    this.cause = cause;
 
-    this.cause =
-      cause;
+    Object.setPrototypeOf(this, new.target.prototype);
   }
 }
 
-function containsControlCharacters(
-  value: string,
-): boolean {
-  return /\r|\n|\0/u.test(
-    value,
+function isUnknownRecord(value: unknown): value is UnknownRecord {
+  return (
+    typeof value === "object"
+    && value !== null
+    && !Array.isArray(value)
   );
 }
 
-function validateRecipient(
-  recipient: string,
-): string {
-  const normalizedRecipient =
-    recipient
-      .trim()
-      .toLowerCase();
+function containsForbiddenHeaderCharacters(value: string): boolean {
+  return /[\r\n\0]/u.test(value);
+}
+
+function containsNullCharacter(value: string): boolean {
+  return value.includes("\0");
+}
+
+function isValidEmailAddress(value: string): boolean {
+  if (
+    value.length < 5
+    || value.length > MAXIMUM_RECIPIENT_LENGTH
+    || containsForbiddenHeaderCharacters(value)
+    || /\s/u.test(value)
+  ) {
+    return false;
+  }
+
+  const separatorIndex = value.lastIndexOf("@");
 
   if (
-    normalizedRecipient.length
-      > 320
-    || containsControlCharacters(
-      normalizedRecipient,
-    )
-    || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(
-      normalizedRecipient,
-    )
+    separatorIndex <= 0
+    || separatorIndex > 64
+    || separatorIndex === value.length - 1
+    || value.indexOf("@") !== separatorIndex
   ) {
+    return false;
+  }
+
+  const localPart = value.slice(0, separatorIndex);
+  const domain = value.slice(separatorIndex + 1).toLowerCase();
+
+  if (
+    localPart.startsWith(".")
+    || localPart.endsWith(".")
+    || localPart.includes("..")
+  ) {
+    return false;
+  }
+
+  return (
+    localPart.length <= 64
+    && domain.length <= 255
+    && /^[^<>(),:;"\[\]\\]+$/u.test(localPart)
+    && /^(?=.{1,255}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?))+$/u.test(
+      domain,
+    )
+  );
+}
+
+function normalizeEmailAddress(value: string): string | null {
+  const trimmedValue = value.trim();
+  const bracketMatch = /^([^<>]*)<([^<>]+)>$/u.exec(trimmedValue);
+
+  if (
+    (trimmedValue.includes("<") || trimmedValue.includes(">"))
+    && !bracketMatch
+  ) {
+    return null;
+  }
+
+  const rawAddress = bracketMatch?.[2]?.trim() ?? trimmedValue;
+  const separatorIndex = rawAddress.lastIndexOf("@");
+
+  if (!isValidEmailAddress(rawAddress) || separatorIndex <= 0) {
+    return null;
+  }
+
+  return [
+    rawAddress.slice(0, separatorIndex).toLowerCase(),
+    rawAddress.slice(separatorIndex + 1).toLowerCase(),
+  ].join("@");
+}
+
+function validateRecipient(recipient: string): string {
+  const normalizedRecipient = normalizeEmailAddress(recipient);
+
+  if (!normalizedRecipient) {
     throw new EmailDeliveryError(
       "El destinatario del correo no es válido.",
     );
@@ -92,255 +152,200 @@ function validateRecipient(
   return normalizedRecipient;
 }
 
-function validateSubject(
-  subject: string,
-): string {
-  const normalizedSubject =
-    subject.trim();
+function validateSubject(subject: string): string {
+  const normalizedSubject = subject.trim();
 
   if (
     normalizedSubject.length === 0
-    || normalizedSubject.length
-      > MAXIMUM_SUBJECT_LENGTH
-    || containsControlCharacters(
-      normalizedSubject,
-    )
+    || normalizedSubject.length > MAXIMUM_SUBJECT_LENGTH
+    || containsForbiddenHeaderCharacters(normalizedSubject)
   ) {
     throw new EmailDeliveryError(
-      `El asunto debe contener entre 1 y ${MAXIMUM_SUBJECT_LENGTH} caracteres y no puede incluir saltos de línea.`,
+      `El asunto debe contener entre 1 y ${MAXIMUM_SUBJECT_LENGTH} caracteres y no puede incluir caracteres de control.`,
     );
   }
 
   return normalizedSubject;
 }
 
-function validateText(
-  text: string,
-): string {
-  const normalizedText =
-    text.trim();
+function validateText(text: string): string {
+  const normalizedText = text.trim();
 
   if (
     normalizedText.length === 0
-    || normalizedText.length
-      > MAXIMUM_TEXT_LENGTH
-    || normalizedText.includes(
-      "\0",
-    )
+    || normalizedText.length > MAXIMUM_TEXT_LENGTH
+    || containsNullCharacter(normalizedText)
   ) {
     throw new EmailDeliveryError(
-      `El contenido de texto debe contener entre 1 y ${MAXIMUM_TEXT_LENGTH} caracteres.`,
+      `El contenido de texto debe contener entre 1 y ${MAXIMUM_TEXT_LENGTH} caracteres y no puede incluir caracteres nulos.`,
     );
   }
 
   return normalizedText;
 }
 
-function validateHtml(
-  html: string | undefined,
-): string | undefined {
-  if (
-    typeof html
-      === "undefined"
-  ) {
+function validateHtml(html: string | undefined): string | undefined {
+  if (typeof html === "undefined") {
     return undefined;
   }
 
-  const normalizedHtml =
-    html.trim();
+  const normalizedHtml = html.trim();
 
   if (
     normalizedHtml.length === 0
-    || normalizedHtml.length
-      > MAXIMUM_HTML_LENGTH
-    || normalizedHtml.includes(
-      "\0",
-    )
+    || normalizedHtml.length > MAXIMUM_HTML_LENGTH
+    || containsNullCharacter(normalizedHtml)
   ) {
     throw new EmailDeliveryError(
-      `El contenido HTML debe contener entre 1 y ${MAXIMUM_HTML_LENGTH} caracteres.`,
+      `El contenido HTML debe contener entre 1 y ${MAXIMUM_HTML_LENGTH} caracteres y no puede incluir caracteres nulos.`,
     );
   }
 
   return normalizedHtml;
 }
 
-function normalizeAddress(
-  value: string,
-): string | null {
-  const trimmedValue =
-    value.trim();
-
-  const addressMatch =
-    trimmedValue.match(
-      /<([^<>]+)>$/u,
-    );
-
-  const address =
-    (
-      addressMatch?.[1]
-      ?? trimmedValue
-    )
-      .trim()
-      .toLowerCase();
-
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(
-    address,
-  )
-    ? address
-    : null;
+function normalizeMessage(input: EmailMessage): NormalizedEmailMessage {
+  return {
+    to: validateRecipient(input.to),
+    subject: validateSubject(input.subject),
+    text: validateText(input.text),
+    ...(typeof input.html === "string"
+      ? {
+          html: validateHtml(input.html),
+        }
+      : {}),
+  };
 }
 
-function normalizeAddressList(
-  value: unknown,
-): string[] {
-  if (
-    !Array.isArray(
-      value,
-    )
-  ) {
+function normalizeAddressList(value: unknown): string[] {
+  if (!Array.isArray(value)) {
     return [];
   }
 
-  const normalizedAddresses:
-    string[] = [];
+  const normalizedAddresses = new Set<string>();
 
-  for (
-    const item
-    of value
-  ) {
-    let rawAddress:
-      string | null = null;
+  for (const item of value) {
+    let rawAddress: string | null = null;
 
-    if (
-      typeof item
-        === "string"
-    ) {
-      rawAddress =
-        item;
+    if (typeof item === "string") {
+      rawAddress = item;
     } else if (
-      typeof item
-        === "object"
-      && item !== null
-      && "address" in item
-      && typeof item.address
-        === "string"
+      isUnknownRecord(item)
+      && typeof item.address === "string"
     ) {
-      rawAddress =
-        item.address;
+      rawAddress = item.address;
     }
 
-    if (
-      rawAddress === null
-    ) {
+    if (!rawAddress) {
       continue;
     }
 
-    const normalizedAddress =
-      normalizeAddress(
-        rawAddress,
-      );
+    const normalizedAddress = normalizeEmailAddress(rawAddress);
 
-    if (
-      normalizedAddress
-      && !normalizedAddresses.includes(
-        normalizedAddress,
-      )
-    ) {
-      normalizedAddresses.push(
-        normalizedAddress,
-      );
+    if (normalizedAddress) {
+      normalizedAddresses.add(normalizedAddress);
     }
   }
 
-  return normalizedAddresses;
+  return [...normalizedAddresses];
 }
 
-function createSmtpTransporter():
-  SmtpTransporter {
-  const configuration =
-    getEmailConfiguration();
+function normalizeTransportValue(
+  value: unknown,
+  fallback: string,
+): string {
+  if (typeof value !== "string") {
+    return fallback;
+  }
+
+  const normalizedValue = value
+    .replace(/[\r\n\0]+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+
+  if (normalizedValue.length === 0) {
+    return fallback;
+  }
+
+  return normalizedValue.slice(0, MAXIMUM_TRANSPORT_VALUE_LENGTH);
+}
+
+function getSafeSmtpErrorDetails(error: unknown): UnknownRecord | null {
+  if (!isUnknownRecord(error)) {
+    return null;
+  }
+
+  const details: UnknownRecord = {};
 
   if (
-    configuration.mode
-      !== "smtp"
+    typeof error.code === "string"
+    && /^[A-Z0-9_-]{1,64}$/u.test(error.code)
   ) {
+    details.code = error.code;
+  }
+
+  if (
+    typeof error.command === "string"
+    && /^[A-Z0-9_-]{1,64}$/u.test(error.command)
+  ) {
+    details.command = error.command;
+  }
+
+  if (
+    typeof error.responseCode === "number"
+    && Number.isSafeInteger(error.responseCode)
+  ) {
+    details.responseCode = error.responseCode;
+  }
+
+  return Object.keys(details).length > 0
+    ? details
+    : null;
+}
+
+function createSmtpTransporter(): SmtpTransporter {
+  const configuration = getEmailConfiguration();
+
+  if (configuration.mode !== "smtp") {
     throw new EmailDeliveryError(
       "El transporte SMTP no está habilitado.",
     );
   }
 
   return nodemailer.createTransport({
-    host:
-      configuration.smtp.host,
-
-    port:
-      configuration.smtp.port,
-
-    secure:
-      configuration.smtp.secure,
-
-    requireTLS:
-      configuration.smtp.requireTls,
-
+    host: configuration.smtp.host,
+    port: configuration.smtp.port,
+    secure: configuration.smtp.secure,
+    requireTLS: configuration.smtp.requireTls,
     auth: {
-      user:
-        configuration.smtp.user,
-
-      pass:
-        configuration.smtp.password,
+      user: configuration.smtp.user,
+      pass: configuration.smtp.password,
     },
-
-    connectionTimeout:
-      configuration.smtp
-        .connectionTimeoutMs,
-
-    greetingTimeout:
-      configuration.smtp
-        .greetingTimeoutMs,
-
-    socketTimeout:
-      configuration.smtp
-        .socketTimeoutMs,
-
-    logger:
-      false,
-
-    debug:
-      false,
-
-    disableFileAccess:
-      true,
-
-    disableUrlAccess:
-      true,
+    connectionTimeout: configuration.smtp.connectionTimeoutMs,
+    greetingTimeout: configuration.smtp.greetingTimeoutMs,
+    socketTimeout: configuration.smtp.socketTimeoutMs,
+    logger: false,
+    debug: false,
+    disableFileAccess: true,
+    disableUrlAccess: true,
   });
 }
 
-function getSmtpTransporter():
-  SmtpTransporter {
-  if (
-    cachedSmtpTransporter
-  ) {
+function getSmtpTransporter(): SmtpTransporter {
+  if (cachedSmtpTransporter) {
     return cachedSmtpTransporter;
   }
 
-  cachedSmtpTransporter =
-    createSmtpTransporter();
+  cachedSmtpTransporter = createSmtpTransporter();
 
   return cachedSmtpTransporter;
 }
 
 function deliverToConsole(
-  message:
-    Required<EmailMessage>,
-
+  message: NormalizedEmailMessage,
   from: string,
 ): EmailDeliveryResult {
-  if (
-    process.env.NODE_ENV
-      === "production"
-  ) {
+  if (process.env.NODE_ENV === "production") {
     throw new EmailDeliveryError(
       "El transporte de correo por consola está deshabilitado en producción.",
     );
@@ -359,53 +364,34 @@ function deliverToConsole(
       message.text,
       "========================================",
       "",
-    ].join(
-      "\n",
-    ),
+    ].join("\n"),
   );
 
   return {
-    mode:
-      "console",
-
-    messageId:
-      null,
-
-    accepted:
-      [
-        message.to,
-      ],
-
-    rejected:
-      [],
-
-    response:
-      "Correo mostrado en la terminal de desarrollo.",
+    mode: "console",
+    messageId: null,
+    accepted: [message.to],
+    rejected: [],
+    response: "Correo mostrado en la terminal de desarrollo.",
   };
 }
 
 function ensureRecipientWasAccepted(
   recipient: string,
-
-  accepted:
-    readonly string[],
-
-  rejected:
-    readonly string[],
+  accepted: readonly string[],
+  rejected: readonly string[],
 ): void {
-  const recipientWasAccepted =
-    accepted.includes(
-      recipient,
-    );
+  const normalizedRecipient = normalizeEmailAddress(recipient);
 
-  const recipientWasRejected =
-    rejected.includes(
-      recipient,
+  if (!normalizedRecipient) {
+    throw new EmailDeliveryError(
+      "El destinatario normalizado del correo no es válido.",
     );
+  }
 
   if (
-    !recipientWasAccepted
-    || recipientWasRejected
+    !accepted.includes(normalizedRecipient)
+    || rejected.includes(normalizedRecipient)
   ) {
     throw new EmailDeliveryError(
       "El servidor SMTP no aceptó al destinatario del correo.",
@@ -420,84 +406,32 @@ function ensureRecipientWasAccepted(
 export async function sendEmail(
   input: EmailMessage,
 ): Promise<EmailDeliveryResult> {
-  const configuration =
-    getEmailConfiguration();
+  const configuration = getEmailConfiguration();
+  const message = normalizeMessage(input);
 
-  const normalizedText =
-    validateText(
-      input.text,
-    );
-
-  const message:
-    Required<EmailMessage> = {
-      to:
-        validateRecipient(
-          input.to,
-        ),
-
-      subject:
-        validateSubject(
-          input.subject,
-        ),
-
-      text:
-        normalizedText,
-
-      html:
-        validateHtml(
-          input.html,
-        ) ?? normalizedText,
-    };
-
-  if (
-    configuration.mode
-      === "console"
-  ) {
-    return deliverToConsole(
-      message,
-      configuration.from,
-    );
+  if (configuration.mode === "console") {
+    return deliverToConsole(message, configuration.from);
   }
 
   try {
-    const transporter =
-      getSmtpTransporter();
+    const transporter = getSmtpTransporter();
 
-    const deliveryInformation =
-      await transporter.sendMail({
-        from:
-          configuration.from,
+    const deliveryInformation = await transporter.sendMail({
+      from: configuration.from,
+      to: message.to,
+      subject: message.subject,
+      text: message.text,
+      ...(message.html
+        ? {
+            html: message.html,
+          }
+        : {}),
+      disableFileAccess: true,
+      disableUrlAccess: true,
+    });
 
-        to:
-          message.to,
-
-        subject:
-          message.subject,
-
-        text:
-          message.text,
-
-        html:
-          message.html,
-
-        disableFileAccess:
-          true,
-
-        disableUrlAccess:
-          true,
-      });
-
-    const accepted =
-      normalizeAddressList(
-        deliveryInformation
-          .accepted,
-      );
-
-    const rejected =
-      normalizeAddressList(
-        deliveryInformation
-          .rejected,
-      );
+    const accepted = normalizeAddressList(deliveryInformation.accepted);
+    const rejected = normalizeAddressList(deliveryInformation.rejected);
 
     ensureRecipientWasAccepted(
       message.to,
@@ -506,42 +440,35 @@ export async function sendEmail(
     );
 
     return {
-      mode:
-        "smtp",
-
+      mode: "smtp",
       messageId:
-        typeof deliveryInformation
-          .messageId === "string"
-        && deliveryInformation
-          .messageId
-          .trim()
-          .length > 0
-          ? deliveryInformation
-              .messageId
-              .trim()
+        typeof deliveryInformation.messageId === "string"
+        && deliveryInformation.messageId.trim().length > 0
+          ? normalizeTransportValue(deliveryInformation.messageId, "") || null
           : null,
-
       accepted,
       rejected,
-
-      response:
-        typeof deliveryInformation
-          .response === "string"
-        && deliveryInformation
-          .response
-          .trim()
-          .length > 0
-          ? deliveryInformation
-              .response
-              .trim()
-          : "Correo aceptado por el servidor SMTP.",
+      response: normalizeTransportValue(
+        deliveryInformation.response,
+        "Correo aceptado por el servidor SMTP.",
+      ),
     };
   } catch (error) {
-    if (
-      error
-      instanceof EmailDeliveryError
-    ) {
+    if (error instanceof EmailDeliveryError) {
       throw error;
+    }
+
+    const safeDetails = getSafeSmtpErrorDetails(error);
+
+    if (safeDetails) {
+      console.error(
+        "No se pudo enviar un correo mediante SMTP.",
+        safeDetails,
+      );
+    } else {
+      console.error(
+        "No se pudo enviar un correo mediante SMTP.",
+      );
     }
 
     clearEmailTransporter();
@@ -553,31 +480,18 @@ export async function sendEmail(
   }
 }
 
-export async function verifyEmailConnection():
-  Promise<boolean> {
-  const configuration =
-    getEmailConfiguration();
+export async function verifyEmailConnection(): Promise<boolean> {
+  const configuration = getEmailConfiguration();
 
-  if (
-    configuration.mode
-      === "console"
-  ) {
-    return (
-      process.env.NODE_ENV
-      !== "production"
-    );
+  if (configuration.mode === "console") {
+    return process.env.NODE_ENV !== "production";
   }
 
   try {
-    const transporter =
-      getSmtpTransporter();
+    const transporter = getSmtpTransporter();
+    const verified = await transporter.verify();
 
-    const verified =
-      await transporter.verify();
-
-    if (
-      !verified
-    ) {
+    if (!verified) {
       clearEmailTransporter();
 
       throw new EmailDeliveryError(
@@ -587,10 +501,7 @@ export async function verifyEmailConnection():
 
     return true;
   } catch (error) {
-    if (
-      error
-      instanceof EmailDeliveryError
-    ) {
+    if (error instanceof EmailDeliveryError) {
       throw error;
     }
 
@@ -603,16 +514,18 @@ export async function verifyEmailConnection():
   }
 }
 
-export function clearEmailTransporter():
-  void {
-  if (
-    cachedSmtpTransporter
-    && typeof cachedSmtpTransporter
-      .close === "function"
-  ) {
-    cachedSmtpTransporter.close();
-  }
+export function clearEmailTransporter(): void {
+  const transporter = cachedSmtpTransporter;
+  cachedSmtpTransporter = null;
 
-  cachedSmtpTransporter =
-    null;
+  if (
+    transporter
+    && typeof transporter.close === "function"
+  ) {
+    try {
+      transporter.close();
+    } catch {
+      // El transporte puede haberse cerrado previamente por el servidor SMTP.
+    }
+  }
 }

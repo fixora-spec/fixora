@@ -151,6 +151,23 @@
       "close": "Close access",
       "back": "Back"
     },
+    "authenticationShell": {
+      "userSignIn": {
+        "title": "Hello again!",
+        "description": "Sign in to your account to continue enjoying Fixora services and solutions.",
+        "action": "Register"
+      },
+      "userRegistration": {
+        "title": "Welcome!",
+        "description": "Create your account and join Fixora to access our services and benefits.",
+        "action": "Sign in"
+      },
+      "adminSignIn": {
+        "title": "Administrator panel",
+        "description": "Exclusive access for authorized Fixora personnel.",
+        "action": "User access"
+      }
+    },
     "userSignIn": {
       "title": "Sign in",
       "description": "Sign in with the email address and password of your verified account.",

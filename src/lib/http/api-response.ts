@@ -11,8 +11,7 @@ import type {
   AuthFieldError,
 } from "@/types/auth";
 
-export type ApiResponseHeaders =
-  HeadersInit;
+export type ApiResponseHeaders = HeadersInit;
 
 export type ApiSuccessResponseOptions = {
   status?: number;
@@ -24,57 +23,98 @@ export type ApiErrorResponseOptions = {
   message: string;
   status?: number;
 
-  fieldErrors?:
-    readonly AuthFieldError[];
-
+  fieldErrors?: readonly AuthFieldError[];
   retryAfterSeconds?: number;
-
   headers?: ApiResponseHeaders;
 };
 
-function createResponseHeaders(
-  initialHeaders?: HeadersInit,
-): Headers {
-  const headers =
-    new Headers(initialHeaders);
+const MAXIMUM_ERROR_MESSAGE_LENGTH = 1_000;
+const MAXIMUM_FIELD_ERRORS = 20;
 
-  headers.set(
-    "Cache-Control",
-    "no-store",
-  );
+function createResponseHeaders(initialHeaders?: HeadersInit): Headers {
+  let headers: Headers;
+
+  try {
+    headers = new Headers(initialHeaders);
+  } catch {
+    throw new Error("Las cabeceras HTTP de la respuesta no son válidas.");
+  }
+
+  headers.set("Cache-Control", "no-store, max-age=0");
+  headers.set("Pragma", "no-cache");
+  headers.set("Expires", "0");
+  headers.set("X-Content-Type-Options", "nosniff");
 
   return headers;
 }
 
-function validateHttpStatus(
-  status: number,
-): void {
+function validateSuccessStatus(status: number): void {
   if (
     !Number.isSafeInteger(status)
-    || status < 100
-    || status > 599
+    || status < 200
+    || status > 299
+    || status === 204
+    || status === 205
   ) {
     throw new Error(
-      "El estado HTTP de la respuesta no es válido.",
+      "Una respuesta JSON exitosa debe usar un estado HTTP válido entre 200 y 299 que permita contenido.",
     );
   }
 }
 
-function validateRetryAfterSeconds(
-  retryAfterSeconds:
-    number | undefined,
-): void {
+function validateErrorStatus(status: number): void {
   if (
-    typeof retryAfterSeconds
-      === "undefined"
+    !Number.isSafeInteger(status)
+    || status < 400
+    || status > 599
   ) {
+    throw new Error(
+      "Una respuesta de error debe usar un estado HTTP válido entre 400 y 599.",
+    );
+  }
+}
+
+function validateErrorMessage(message: string): string {
+  const normalizedMessage = message.trim();
+
+  if (
+    normalizedMessage.length === 0
+    || normalizedMessage.length > MAXIMUM_ERROR_MESSAGE_LENGTH
+    || /[\r\n\0]/u.test(normalizedMessage)
+  ) {
+    throw new Error("El mensaje de error de la API no es válido.");
+  }
+
+  return normalizedMessage;
+}
+
+function validateFieldErrors(
+  fieldErrors: readonly AuthFieldError[] | undefined,
+): readonly AuthFieldError[] | undefined {
+  if (typeof fieldErrors === "undefined") {
+    return undefined;
+  }
+
+  if (!Array.isArray(fieldErrors) || fieldErrors.length > MAXIMUM_FIELD_ERRORS) {
+    throw new Error("La colección de errores de campos no es válida.");
+  }
+
+  return fieldErrors.map((fieldError) => ({
+    field: fieldError.field,
+    code: fieldError.code,
+  }));
+}
+
+function validateRetryAfterSeconds(
+  retryAfterSeconds: number | undefined,
+  status: number,
+): void {
+  if (typeof retryAfterSeconds === "undefined") {
     return;
   }
 
   if (
-    !Number.isSafeInteger(
-      retryAfterSeconds,
-    )
+    !Number.isSafeInteger(retryAfterSeconds)
     || retryAfterSeconds < 1
     || retryAfterSeconds > 86_400
   ) {
@@ -82,156 +122,103 @@ function validateRetryAfterSeconds(
       "retryAfterSeconds debe estar entre 1 y 86400.",
     );
   }
+
+  if (status !== 429 && status !== 503) {
+    throw new Error(
+      "Retry-After solo puede enviarse con los estados HTTP 429 o 503.",
+    );
+  }
 }
 
-export function createApiSuccessResponse<
-  TData,
->(
+function normalizeAllowedMethods(
+  allowedMethods: readonly string[],
+): string[] {
+  const normalizedMethods = [
+    ...new Set(
+      allowedMethods.map((method) => method.trim().toUpperCase()),
+    ),
+  ].filter((method) => /^[A-Z]+$/u.test(method));
+
+  if (normalizedMethods.length === 0) {
+    throw new Error("Debe indicar al menos un método HTTP permitido.");
+  }
+
+  return normalizedMethods;
+}
+
+export function createApiSuccessResponse<TData>(
   data: TData,
-  options:
-    ApiSuccessResponseOptions = {},
-): NextResponse<
-  AuthApiSuccess<TData>
-> {
-  const status =
-    options.status ?? 200;
+  options: ApiSuccessResponseOptions = {},
+): NextResponse<AuthApiSuccess<TData>> {
+  const status = options.status ?? 200;
 
-  validateHttpStatus(status);
+  validateSuccessStatus(status);
 
-  const responseBody:
-    AuthApiSuccess<TData> = {
-    success:
-      true,
-
+  const responseBody: AuthApiSuccess<TData> = {
+    success: true,
     data,
   };
 
-  return NextResponse.json(
-    responseBody,
-    {
-      status,
-
-      headers:
-        createResponseHeaders(
-          options.headers,
-        ),
-    },
-  );
+  return NextResponse.json(responseBody, {
+    status,
+    headers: createResponseHeaders(options.headers),
+  });
 }
 
 export function createApiErrorResponse(
   options: ApiErrorResponseOptions,
 ): NextResponse<AuthApiError> {
-  const status =
-    options.status ?? 400;
+  const status = options.status ?? 400;
 
-  validateHttpStatus(status);
+  validateErrorStatus(status);
+  validateRetryAfterSeconds(options.retryAfterSeconds, status);
 
-  validateRetryAfterSeconds(
-    options.retryAfterSeconds,
-  );
+  const message = validateErrorMessage(options.message);
+  const fieldErrors = validateFieldErrors(options.fieldErrors);
+  const headers = createResponseHeaders(options.headers);
 
-  const headers =
-    createResponseHeaders(
-      options.headers,
-    );
-
-  if (
-    typeof options.retryAfterSeconds
-      === "number"
-  ) {
-    headers.set(
-      "Retry-After",
-      String(
-        options.retryAfterSeconds,
-      ),
-    );
+  if (typeof options.retryAfterSeconds === "number") {
+    headers.set("Retry-After", String(options.retryAfterSeconds));
   }
 
-  const responseBody:
-    AuthApiError = {
-    success:
-      false,
-
+  const responseBody: AuthApiError = {
+    success: false,
     error: {
-      code:
-        options.code,
-
-      message:
-        options.message,
-
-      ...(options.fieldErrors
-        ? {
-            fieldErrors:
-              options.fieldErrors,
-          }
-        : {}),
-
-      ...(typeof options
-        .retryAfterSeconds
-        === "number"
-        ? {
-            retryAfterSeconds:
-              options
-                .retryAfterSeconds,
-          }
+      code: options.code,
+      message,
+      ...(fieldErrors ? { fieldErrors } : {}),
+      ...(typeof options.retryAfterSeconds === "number"
+        ? { retryAfterSeconds: options.retryAfterSeconds }
         : {}),
     },
   };
 
-  return NextResponse.json(
-    responseBody,
-    {
-      status,
-      headers,
-    },
-  );
+  return NextResponse.json(responseBody, {
+    status,
+    headers,
+  });
 }
 
 export function createApiNoContentResponse(
   headers?: HeadersInit,
 ): NextResponse {
-  return new NextResponse(
-    null,
-    {
-      status:
-        204,
-
-      headers:
-        createResponseHeaders(
-          headers,
-        ),
-    },
-  );
+  return new NextResponse(null, {
+    status: 204,
+    headers: createResponseHeaders(headers),
+  });
 }
 
 export function createMethodNotAllowedResponse(
-  allowedMethods:
-    readonly string[],
+  allowedMethods: readonly string[],
 ): NextResponse<AuthApiError> {
-  const normalizedMethods =
-    allowedMethods
-      .map((method) =>
-        method.trim().toUpperCase(),
-      )
-      .filter(
-        (method) =>
-          method.length > 0,
-      );
+  const normalizedMethods = normalizeAllowedMethods(allowedMethods);
 
   return createApiErrorResponse({
-    code:
-      "INVALID_REQUEST",
-
-    message:
-      "El método HTTP solicitado no está permitido.",
-
-    status:
-      405,
-
+    code: "INVALID_REQUEST",
+    message: "El método HTTP solicitado no está permitido.",
+    status: 405,
     headers: {
-      Allow:
-        normalizedMethods.join(", "),
+      Allow: normalizedMethods.join(", "),
     },
   });
 }

@@ -44,6 +44,8 @@ const BODY_LIMIT_BYTES = Math.min(
   8_192,
 );
 
+const UNKNOWN_IP_IDENTIFIER = "unknown";
+
 type Messages = {
   forbiddenOrigin: string;
   invalidRequest: string;
@@ -63,10 +65,7 @@ function resolveLocale(
     && body !== null
     && !Array.isArray(body)
     && "locale" in body
-    && (
-      body.locale === "es"
-      || body.locale === "en"
-    )
+    && (body.locale === "es" || body.locale === "en")
   ) {
     return body.locale;
   }
@@ -88,51 +87,31 @@ function resolveLocale(
     : "es";
 }
 
-function getMessages(
-  locale: Locale,
-): Messages {
+function getMessages(locale: Locale): Messages {
   return locale === "en"
     ? {
-        forbiddenOrigin:
-          "The request origin is not allowed.",
-
+        forbiddenOrigin: "The request origin is not allowed.",
         invalidRequest:
           "Review the email address, account type, and recovery code and try again.",
-
         rateLimited:
           "Too many recovery-code attempts were made. Please wait before trying again.",
-
-        invalidCode:
-          "The recovery code is invalid.",
-
-        expiredCode:
-          "The recovery code has expired.",
-
+        invalidCode: "The recovery code is invalid.",
+        expiredCode: "The recovery code has expired.",
         attemptsExceeded:
           "The allowed attempts for this recovery code have been exhausted.",
-
         internalError:
           "The recovery code could not be verified at this time.",
       }
     : {
-        forbiddenOrigin:
-          "El origen de la solicitud no está permitido.",
-
+        forbiddenOrigin: "El origen de la solicitud no está permitido.",
         invalidRequest:
           "Revisa el correo electrónico, el tipo de cuenta y el código de recuperación e inténtalo nuevamente.",
-
         rateLimited:
           "Se realizaron demasiados intentos con el código de recuperación. Espera antes de intentarlo nuevamente.",
-
-        invalidCode:
-          "El código de recuperación no es válido.",
-
-        expiredCode:
-          "El código de recuperación ha vencido.",
-
+        invalidCode: "El código de recuperación no es válido.",
+        expiredCode: "El código de recuperación ha vencido.",
         attemptsExceeded:
           "Se agotaron los intentos permitidos para este código de recuperación.",
-
         internalError:
           "No se pudo verificar el código de recuperación en este momento.",
       };
@@ -192,9 +171,7 @@ function getRateLimitIdentifiers(
   email: string,
   accountRole: string,
 ): readonly string[] {
-  const ipAddress =
-    getRequestIpAddress(request)
-    ?? "unknown";
+  const ipAddress = getRequestIpAddress(request) ?? UNKNOWN_IP_IDENTIFIER;
 
   return [
     `ip:${ipAddress}`,
@@ -211,27 +188,21 @@ async function consumeVerificationLimits(
   let retryAfterSeconds = 0;
 
   for (const identifier of identifiers) {
-    const result =
-      await consumeDefaultAuthRateLimit(
-        AUTH_RATE_LIMIT_ACTIONS
-          .passwordResetVerification,
-
-        identifier,
-      );
+    const result = await consumeDefaultAuthRateLimit(
+      AUTH_RATE_LIMIT_ACTIONS.passwordResetVerification,
+      identifier,
+    );
 
     if (!result.allowed) {
-      retryAfterSeconds =
-        Math.max(
-          retryAfterSeconds,
-          result.retryAfterSeconds,
-        );
+      retryAfterSeconds = Math.max(
+        retryAfterSeconds,
+        result.retryAfterSeconds,
+      );
     }
   }
 
   return {
-    allowed:
-      retryAfterSeconds === 0,
-
+    allowed: retryAfterSeconds === 0,
     retryAfterSeconds,
   };
 }
@@ -240,14 +211,11 @@ async function clearVerificationLimits(
   identifiers: readonly string[],
 ): Promise<void> {
   await Promise.allSettled(
-    identifiers.map(
-      (identifier) =>
-        resetAuthRateLimit(
-          AUTH_RATE_LIMIT_ACTIONS
-            .passwordResetVerification,
-
-          identifier,
-        ),
+    identifiers.map((identifier) =>
+      resetAuthRateLimit(
+        AUTH_RATE_LIMIT_ACTIONS.passwordResetVerification,
+        identifier,
+      ),
     ),
   );
 }
@@ -255,8 +223,7 @@ async function clearVerificationLimits(
 export async function POST(
   request: Request,
 ): Promise<NextResponse> {
-  const fallbackLocale =
-    resolveLocale(request);
+  const fallbackLocale = resolveLocale(request);
 
   try {
     verifyRequestOrigin(request);
@@ -265,35 +232,24 @@ export async function POST(
       return createApiErrorResponse({
         status: error.status,
         code: error.code,
-        message:
-          getMessages(fallbackLocale)
-            .forbiddenOrigin,
+        message: getMessages(fallbackLocale).forbiddenOrigin,
       });
     }
 
     return createApiErrorResponse({
       status: 500,
       code: "INTERNAL_ERROR",
-      message:
-        getMessages(fallbackLocale)
-          .internalError,
+      message: getMessages(fallbackLocale).internalError,
     });
   }
 
   let body: unknown;
 
   try {
-    body =
-      await parseJsonBody(
-        request,
-        {
-          maximumBytes:
-            BODY_LIMIT_BYTES,
-
-          requireObject:
-            true,
-        },
-      );
+    body = await parseJsonBody(request, {
+      maximumBytes: BODY_LIMIT_BYTES,
+      requireObject: true,
+    });
   } catch (error) {
     if (isJsonBodyError(error)) {
       return createApiErrorResponse({
@@ -306,37 +262,20 @@ export async function POST(
     return createApiErrorResponse({
       status: 500,
       code: "INTERNAL_ERROR",
-      message:
-        getMessages(fallbackLocale)
-          .internalError,
+      message: getMessages(fallbackLocale).internalError,
     });
   }
 
-  const locale =
-    resolveLocale(
-      request,
-      body,
-    );
+  const locale = resolveLocale(request, body);
+  const messages = getMessages(locale);
 
-  const messages =
-    getMessages(locale);
-
-  let input:
-    ReturnType<
-      typeof validatePasswordResetCodeRequest
-    >;
+  let input: ReturnType<typeof validatePasswordResetCodeRequest>;
 
   try {
-    input =
-      validatePasswordResetCodeRequest(
-        body,
-      );
+    input = validatePasswordResetCodeRequest(body);
   } catch (error) {
     if (isAuthValidationError(error)) {
-      return createValidationResponse(
-        locale,
-        error.fieldErrors,
-      );
+      return createValidationResponse(locale, error.fieldErrors);
     }
 
     return createApiErrorResponse({
@@ -346,68 +285,40 @@ export async function POST(
     });
   }
 
-  const rateLimitIdentifiers =
-    getRateLimitIdentifiers(
-      request,
-      input.email,
-      input.accountRole,
-    );
+  const rateLimitIdentifiers = getRateLimitIdentifiers(
+    request,
+    input.email,
+    input.accountRole,
+  );
 
   try {
-    const rateLimit =
-      await consumeVerificationLimits(
-        rateLimitIdentifiers,
-      );
+    const rateLimit = await consumeVerificationLimits(
+      rateLimitIdentifiers,
+    );
 
     if (!rateLimit.allowed) {
       return createApiErrorResponse({
         status: 429,
         code: "RATE_LIMITED",
         message: messages.rateLimited,
-
-        retryAfterSeconds:
-          Math.max(
-            1,
-            rateLimit.retryAfterSeconds,
-          ),
+        retryAfterSeconds: Math.max(1, rateLimit.retryAfterSeconds),
       });
     }
 
-    const result =
-      await verifyPasswordResetCode(
-        input,
-      );
+    const result = await verifyPasswordResetCode(input);
 
-    await clearVerificationLimits(
-      rateLimitIdentifiers,
-    );
+    await clearVerificationLimits(rateLimitIdentifiers);
 
-    return createApiSuccessResponse(
-      result,
-    );
+    return createApiSuccessResponse(result);
   } catch (error) {
     if (isAuthServiceError(error)) {
       return createApiErrorResponse({
         status: error.status,
-
-        code:
-          mapServiceErrorCode(
-            error.code,
-          ),
-
-        message:
-          getServiceErrorMessage(
-            error.code,
-            messages,
-          ),
-
+        code: mapServiceErrorCode(error.code),
+        message: getServiceErrorMessage(error.code, messages),
         ...(error.retryAfterSeconds
           ? {
-              retryAfterSeconds:
-                Math.max(
-                  1,
-                  error.retryAfterSeconds,
-                ),
+              retryAfterSeconds: Math.max(1, error.retryAfterSeconds),
             }
           : {}),
       });

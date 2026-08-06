@@ -2,14 +2,22 @@
   "name": "fixora",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "pnpm@11.20.0",
+  "engines": {
+    "node": ">=20.9.0",
+    "pnpm": ">=11.20.0 <12"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint",
+    "lint": "eslint . --max-warnings=0",
     "typecheck": "tsc --noEmit",
+    "check": "pnpm typecheck && pnpm lint",
     "auth:check": "node scripts/check-auth-environment.mjs",
     "db:check": "node scripts/check-sql-connection.mjs",
+    "security:check": "pnpm auth:check && pnpm db:check",
+    "verify": "pnpm check && pnpm security:check",
     "db:provision-admin": "node scripts/provision-admin.mjs"
   },
   "dependencies": {

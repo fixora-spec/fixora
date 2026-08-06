@@ -76,10 +76,12 @@ function isAbortError(
   error: unknown,
 ): boolean {
   return (
-    error instanceof DOMException
+    error instanceof Error
     && error.name === "AbortError"
   );
 }
+
+const PASSWORD_MAXIMUM_LENGTH = 128;
 
 function isPasswordResetFieldName(
   value: string,
@@ -101,11 +103,11 @@ function createInitialValues(
   };
 }
 
-function validateResetToken(
+function normalizeResetToken(
   resetToken: string,
-): string {
+): string | null {
   const normalizedToken =
-    resetToken.trim();
+    resetToken;
 
   if (
     normalizedToken.length < 32
@@ -114,9 +116,7 @@ function validateResetToken(
       normalizedToken,
     )
   ) {
-    throw new Error(
-      "El token de recuperación no es válido.",
-    );
+    return null;
   }
 
   return normalizedToken;
@@ -164,7 +164,7 @@ export function PasswordResetForm({
     );
 
   const normalizedResetToken =
-    validateResetToken(
+    normalizeResetToken(
       resetToken,
     );
 
@@ -207,6 +207,9 @@ export function PasswordResetForm({
     null,
   );
 
+  const mountedReference =
+    useRef(false);
+
   const abortControllerReference =
     useRef<
       AbortController | null
@@ -227,7 +230,9 @@ export function PasswordResetForm({
 
   const controlsDisabled =
     disabled
-    || submitting;
+    || submitting
+    || status === "SUCCESS"
+    || normalizedResetToken === null;
 
   const passwordsMatch =
     values.password.length > 0
@@ -250,7 +255,11 @@ export function PasswordResetForm({
 
   useEffect(
     () => {
+      mountedReference.current = true;
+
       return () => {
+        mountedReference.current = false;
+
         abortControllerReference
           .current
           ?.abort();
@@ -440,7 +449,21 @@ export function PasswordResetForm({
     ): Promise<void> => {
       event.preventDefault();
 
-      if (controlsDisabled) {
+      if (disabled || submitting || status === "SUCCESS") {
+        return;
+      }
+
+      if (normalizedResetToken === null) {
+        setStatus(
+          "ERROR",
+        );
+
+        setFormError(
+          translations(
+            "errors.unknown",
+          ),
+        );
+
         return;
       }
 
@@ -513,6 +536,14 @@ export function PasswordResetForm({
             },
           );
 
+        if (
+          !mountedReference.current
+          || abortControllerReference.current !== abortController
+          || abortController.signal.aborted
+        ) {
+          return;
+        }
+
         setValues(
           EMPTY_FORM_VALUES,
         );
@@ -525,7 +556,11 @@ export function PasswordResetForm({
           result,
         );
       } catch (error) {
-        if (isAbortError(error)) {
+        if (
+          isAbortError(error)
+          || !mountedReference.current
+          || abortControllerReference.current !== abortController
+        ) {
           return;
         }
 
@@ -544,11 +579,9 @@ export function PasswordResetForm({
               error,
             )
               ? error.message
-              : error instanceof Error
-                ? error.message
-                : translations(
-                    "errors.unknown",
-                  ),
+              : translations(
+                  "errors.unknown",
+                ),
           );
         }
       } finally {
@@ -630,6 +663,7 @@ export function PasswordResetForm({
           name="password"
           type="password"
           autoComplete="new-password"
+          maxLength={PASSWORD_MAXIMUM_LENGTH}
           value={
             values.password
           }
@@ -686,6 +720,7 @@ export function PasswordResetForm({
           name="passwordConfirmation"
           type="password"
           autoComplete="new-password"
+          maxLength={PASSWORD_MAXIMUM_LENGTH}
           value={
             values
               .passwordConfirmation

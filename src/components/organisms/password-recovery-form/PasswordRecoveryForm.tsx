@@ -59,10 +59,13 @@ function isAbortError(
   error: unknown,
 ): boolean {
   return (
-    error instanceof DOMException
+    error instanceof Error
     && error.name === "AbortError"
   );
 }
+
+const FALLBACK_CODE_TTL_MILLISECONDS = 10 * 60 * 1_000;
+const FALLBACK_RESEND_DELAY_MILLISECONDS = 60 * 1_000;
 
 function normalizeEmail(
   value: string,
@@ -91,11 +94,36 @@ function normalizeVerificationCode(
 function isEmailValid(
   value: string,
 ): boolean {
+  if (
+    value.length < 5
+    || value.length > 320
+    || /[\s\r\n\0]/u.test(value)
+  ) {
+    return false;
+  }
+
+  const separatorIndex = value.lastIndexOf("@");
+
+  if (
+    separatorIndex <= 0
+    || separatorIndex > 64
+    || separatorIndex === value.length - 1
+    || value.indexOf("@") !== separatorIndex
+  ) {
+    return false;
+  }
+
+  const localPart = value.slice(0, separatorIndex);
+  const domain = value.slice(separatorIndex + 1);
+
   return (
-    value.length >= 5
-    && value.length <= 320
-    && /^[^\s@]+@[^\s@]+\.[^\s@]+$/u
-      .test(value)
+    !localPart.startsWith(".")
+    && !localPart.endsWith(".")
+    && !localPart.includes("..")
+    && domain.length <= 255
+    && /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?))+$/iu.test(
+      domain,
+    )
   );
 }
 
@@ -142,10 +170,6 @@ function getRecoveryErrorMessage(
       error,
     )
   ) {
-    return error.message;
-  }
-
-  if (error instanceof Error) {
     return error.message;
   }
 
@@ -299,6 +323,9 @@ export function PasswordRecoveryForm({
     0,
   );
 
+  const mountedReference =
+    useRef(false);
+
   const requestAbortControllerReference =
     useRef<
       AbortController | null
@@ -325,7 +352,8 @@ export function PasswordRecoveryForm({
 
   const controlsDisabled =
     disabled
-    || busy;
+    || busy
+    || status === "CODE_VERIFIED";
 
   const normalizedEmail =
     normalizeEmail(
@@ -390,7 +418,11 @@ export function PasswordRecoveryForm({
 
   useEffect(
     () => {
+      mountedReference.current = true;
+
       return () => {
+        mountedReference.current = false;
+
         requestAbortControllerReference
           .current
           ?.abort();
@@ -522,12 +554,28 @@ export function PasswordRecoveryForm({
             },
           );
 
+        if (
+          !mountedReference.current
+          || requestAbortControllerReference.current !== abortController
+          || abortController.signal.aborted
+        ) {
+          return false;
+        }
+
+        const responseReceivedAt = Date.now();
+
         setCodeExpiresAt(
-          result.expiresAt,
+          result.expiresAt
+          ?? new Date(
+            responseReceivedAt + FALLBACK_CODE_TTL_MILLISECONDS,
+          ).toISOString(),
         );
 
         setResendAvailableAt(
-          result.resendAvailableAt,
+          result.resendAvailableAt
+          ?? new Date(
+            responseReceivedAt + FALLBACK_RESEND_DELAY_MILLISECONDS,
+          ).toISOString(),
         );
 
         setCode(
@@ -554,7 +602,11 @@ export function PasswordRecoveryForm({
 
         return true;
       } catch (error) {
-        if (isAbortError(error)) {
+        if (
+          isAbortError(error)
+          || !mountedReference.current
+          || requestAbortControllerReference.current !== abortController
+        ) {
           return false;
         }
 
@@ -700,6 +752,14 @@ export function PasswordRecoveryForm({
             },
           );
 
+        if (
+          !mountedReference.current
+          || verificationAbortControllerReference.current !== abortController
+          || abortController.signal.aborted
+        ) {
+          return;
+        }
+
         stopExpirationCountdown();
         stopResendCountdown();
 
@@ -733,7 +793,11 @@ export function PasswordRecoveryForm({
           );
         }
       } catch (error) {
-        if (isAbortError(error)) {
+        if (
+          isAbortError(error)
+          || !mountedReference.current
+          || verificationAbortControllerReference.current !== abortController
+        ) {
           return;
         }
 
@@ -878,6 +942,7 @@ export function PasswordRecoveryForm({
             type="email"
             inputMode="email"
             autoComplete="email"
+            maxLength={320}
             value={email}
             disabled={
               controlsDisabled

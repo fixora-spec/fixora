@@ -83,8 +83,8 @@ export default async function LocaleLayout({
     locale,
   );
 
-  const preloaderLocale =
-    locale as PreloaderLocale;
+  const preloaderLocale: PreloaderLocale =
+    locale;
 
   return (
     <html
@@ -101,7 +101,11 @@ export default async function LocaleLayout({
           "antialiased",
         ].join(" ")}
       >
-        <NextIntlClientProvider>
+        <NextIntlClientProvider
+          locale={
+            locale
+          }
+        >
           <AppProviders>
             <AppPreloader
               locale={

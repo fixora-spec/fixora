@@ -38,6 +38,10 @@ import {
 } from "@/components/organisms/user-sign-in-form";
 
 import {
+  AuthenticationShell,
+} from "@/components/templates/authentication-shell";
+
+import {
   useAuth,
 } from "@/providers/auth-provider";
 
@@ -65,10 +69,16 @@ import type {
 } from "./AuthenticationGateway.types";
 
 const AUTHENTICATION_FLOW_STORAGE_KEY =
+  "fixora.authentication.flow.v2";
+
+const LEGACY_AUTHENTICATION_FLOW_STORAGE_KEY =
   "fixora.authentication.flow.v1";
 
 const AUTHENTICATION_FLOW_STORAGE_VERSION =
-  1;
+  2;
+
+const MAXIMUM_STORED_FLOW_LENGTH =
+  16_384;
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
@@ -76,22 +86,13 @@ const UUID_PATTERN =
 const EMAIL_PATTERN =
   /^[^\s@]+@[^\s@]+\.[^\s@]+$/u;
 
-const RESET_TOKEN_PATTERN =
-  /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/u;
-
-const MINIMUM_RESET_TOKEN_LENGTH =
-  32;
-
-const MAXIMUM_RESET_TOKEN_LENGTH =
-  4_096;
-
 type AuthenticationFlowView =
   | "EMAIL_VERIFICATION"
-  | "PASSWORD_RECOVERY"
-  | "PASSWORD_RESET";
+  | "PASSWORD_RECOVERY";
 
 type StoredAuthenticationFlowState = {
-  version: number;
+  version:
+    number;
 
   view:
     AuthenticationFlowView;
@@ -102,17 +103,33 @@ type StoredAuthenticationFlowState = {
   verificationState:
     AuthenticationGatewayVerificationState
     | null;
-
-  passwordResetState:
-    AuthenticationGatewayPasswordResetState
-    | null;
 };
 
 type UnknownRecord =
   Record<string, unknown>;
 
+type ShellConfiguration = {
+  view:
+    | "USER_SIGN_IN"
+    | "USER_REGISTRATION"
+    | "ADMIN_SIGN_IN";
+
+  panelTitle:
+    string;
+
+  panelDescription:
+    string;
+
+  panelActionLabel:
+    string;
+
+  onPanelAction:
+    () => void;
+};
+
 function resolveLocale(
-  locale: string,
+  locale:
+    string,
 ): Locale {
   return locale === "en"
     ? "en"
@@ -120,7 +137,8 @@ function resolveLocale(
 }
 
 function isUnknownRecord(
-  value: unknown,
+  value:
+    unknown,
 ): value is UnknownRecord {
   return (
     typeof value === "object"
@@ -132,7 +150,8 @@ function isUnknownRecord(
 }
 
 function isAccountRoleValue(
-  value: unknown,
+  value:
+    unknown,
 ): value is AccountRole {
   return (
     value === "USER"
@@ -141,17 +160,18 @@ function isAccountRoleValue(
 }
 
 function isAuthenticationFlowView(
-  value: unknown,
+  value:
+    unknown,
 ): value is AuthenticationFlowView {
   return (
     value === "EMAIL_VERIFICATION"
     || value === "PASSWORD_RECOVERY"
-    || value === "PASSWORD_RESET"
   );
 }
 
 function isValidIsoDate(
-  value: unknown,
+  value:
+    unknown,
 ): value is string {
   return (
     typeof value === "string"
@@ -166,7 +186,8 @@ function isValidIsoDate(
 }
 
 function isVerificationState(
-  value: unknown,
+  value:
+    unknown,
 ): value is AuthenticationGatewayVerificationState {
   if (
     !isUnknownRecord(
@@ -177,32 +198,20 @@ function isVerificationState(
   }
 
   return (
-    typeof value.accountId
-      === "string"
-
+    typeof value.accountId === "string"
     && UUID_PATTERN.test(
       value.accountId,
     )
 
-    && typeof value.email
-      === "string"
-
-    && value.email.length
-      <= 320
-
+    && typeof value.email === "string"
+    && value.email.length <= 320
     && EMAIL_PATTERN.test(
       value.email,
     )
 
-    && typeof value.username
-      === "string"
-
-    && value.username
-      .trim()
-      .length > 0
-
-    && value.username.length
-      <= 40
+    && typeof value.username === "string"
+    && value.username.trim().length > 0
+    && value.username.length <= 40
 
     && isValidIsoDate(
       value.verificationExpiresAt,
@@ -214,41 +223,25 @@ function isVerificationState(
   );
 }
 
-function isPasswordResetState(
-  value: unknown,
-): value is AuthenticationGatewayPasswordResetState {
-  if (
-    !isUnknownRecord(
-      value,
-    )
-  ) {
-    return false;
+function removeLegacyStoredAuthenticationFlow():
+  void {
+  try {
+    window.sessionStorage.removeItem(
+      LEGACY_AUTHENTICATION_FLOW_STORAGE_KEY,
+    );
+  } catch {
+    /*
+     * sessionStorage puede estar deshabilitado.
+     */
   }
-
-  return (
-    typeof value.resetToken
-      === "string"
-
-    && value.resetToken.length
-      >= MINIMUM_RESET_TOKEN_LENGTH
-
-    && value.resetToken.length
-      <= MAXIMUM_RESET_TOKEN_LENGTH
-
-    && RESET_TOKEN_PATTERN.test(
-      value.resetToken,
-    )
-
-    && isAccountRoleValue(
-      value.accountRole,
-    )
-  );
 }
 
 function readStoredAuthenticationFlow():
   StoredAuthenticationFlowState
   | null {
   try {
+    removeLegacyStoredAuthenticationFlow();
+
     const serializedState =
       window.sessionStorage.getItem(
         AUTHENTICATION_FLOW_STORAGE_KEY,
@@ -257,6 +250,17 @@ function readStoredAuthenticationFlow():
     if (
       serializedState === null
     ) {
+      return null;
+    }
+
+    if (
+      serializedState.length
+        > MAXIMUM_STORED_FLOW_LENGTH
+    ) {
+      window.sessionStorage.removeItem(
+        AUTHENTICATION_FLOW_STORAGE_KEY,
+      );
+
       return null;
     }
 
@@ -299,35 +303,11 @@ function readStoredAuthenticationFlow():
           ? parsedState.verificationState
           : null;
 
-    const passwordResetState =
-      parsedState.passwordResetState
-        === null
-        ? null
-        : isPasswordResetState(
-            parsedState.passwordResetState,
-          )
-          ? parsedState.passwordResetState
-          : null;
-
     if (
       parsedState.view
         === "EMAIL_VERIFICATION"
 
       && verificationState
-        === null
-    ) {
-      window.sessionStorage.removeItem(
-        AUTHENTICATION_FLOW_STORAGE_KEY,
-      );
-
-      return null;
-    }
-
-    if (
-      parsedState.view
-        === "PASSWORD_RESET"
-
-      && passwordResetState
         === null
     ) {
       window.sessionStorage.removeItem(
@@ -348,13 +328,14 @@ function readStoredAuthenticationFlow():
         parsedState.passwordRecoveryRole,
 
       verificationState,
-      passwordResetState,
     };
   } catch {
     try {
       window.sessionStorage.removeItem(
         AUTHENTICATION_FLOW_STORAGE_KEY,
       );
+
+      removeLegacyStoredAuthenticationFlow();
     } catch {
       /*
        * sessionStorage puede estar deshabilitado.
@@ -371,17 +352,30 @@ function storeAuthenticationFlow(
     StoredAuthenticationFlowState,
 ): void {
   try {
-    window.sessionStorage.setItem(
-      AUTHENTICATION_FLOW_STORAGE_KEY,
-
+    const serializedState =
       JSON.stringify(
         state,
-      ),
+      );
+
+    if (
+      serializedState.length
+        > MAXIMUM_STORED_FLOW_LENGTH
+    ) {
+      clearStoredAuthenticationFlow();
+
+      return;
+    }
+
+    window.sessionStorage.setItem(
+      AUTHENTICATION_FLOW_STORAGE_KEY,
+      serializedState,
     );
+
+    removeLegacyStoredAuthenticationFlow();
   } catch {
     /*
-     * La falta de sessionStorage no debe impedir
-     * usar los formularios de autenticación.
+     * La falta de sessionStorage no impide
+     * utilizar el flujo de autenticación.
      */
   }
 }
@@ -391,6 +385,10 @@ function clearStoredAuthenticationFlow():
   try {
     window.sessionStorage.removeItem(
       AUTHENTICATION_FLOW_STORAGE_KEY,
+    );
+
+    window.sessionStorage.removeItem(
+      LEGACY_AUTHENTICATION_FLOW_STORAGE_KEY,
     );
   } catch {
     /*
@@ -419,12 +417,14 @@ export function AuthenticationGateway({
       "auth.authenticationGateway",
     );
 
-  const currentLocale =
-    useLocale();
+  const shellTranslations =
+    useTranslations(
+      "auth.authenticationShell",
+    );
 
   const locale =
     resolveLocale(
-      currentLocale,
+      useLocale(),
     );
 
   const generatedPanelId =
@@ -447,9 +447,10 @@ export function AuthenticationGateway({
   const [
     storageHydrated,
     setStorageHydrated,
-  ] = useState(
-    false,
-  );
+  ] =
+    useState(
+      false,
+    );
 
   const [
     verificationState,
@@ -481,6 +482,14 @@ export function AuthenticationGateway({
         view:
           AuthenticationPanelView,
       ): void => {
+        if (
+          view !== "PASSWORD_RESET"
+        ) {
+          setPasswordResetState(
+            null,
+          );
+        }
+
         setAuthenticationView(
           view,
         );
@@ -495,7 +504,7 @@ export function AuthenticationGateway({
       (): void => {
         if (
           panelView
-          === "PASSWORD_RESET"
+            === "PASSWORD_RESET"
         ) {
           setAuthenticationView(
             "PASSWORD_RECOVERY",
@@ -684,6 +693,12 @@ export function AuthenticationGateway({
         result:
           PasswordResetCodeResponseData,
       ): void => {
+        /*
+         * El token de restablecimiento se mantiene únicamente en memoria.
+         * Nunca se escribe en sessionStorage ni localStorage.
+         */
+        clearStoredAuthenticationFlow();
+
         setPasswordResetState({
           resetToken:
             result.resetToken,
@@ -784,7 +799,7 @@ export function AuthenticationGateway({
               );
 
               setPasswordResetState(
-                storedState.passwordResetState,
+                null,
               );
 
               setAuthenticationView(
@@ -835,9 +850,6 @@ export function AuthenticationGateway({
           passwordRecoveryRole,
 
           verificationState,
-
-          passwordResetState:
-            null,
         });
 
         return;
@@ -858,35 +870,6 @@ export function AuthenticationGateway({
 
           verificationState:
             null,
-
-          passwordResetState:
-            null,
-        });
-
-        return;
-      }
-
-      if (
-        panelView
-          === "PASSWORD_RESET"
-
-        && passwordResetState
-          !== null
-      ) {
-        storeAuthenticationFlow({
-          version:
-            AUTHENTICATION_FLOW_STORAGE_VERSION,
-
-          view:
-            "PASSWORD_RESET",
-
-          passwordRecoveryRole:
-            passwordResetState.accountRole,
-
-          verificationState:
-            null,
-
-          passwordResetState,
         });
 
         return;
@@ -897,7 +880,6 @@ export function AuthenticationGateway({
     [
       panelView,
       passwordRecoveryRole,
-      passwordResetState,
       storageHydrated,
       verificationState,
     ],
@@ -907,7 +889,7 @@ export function AuthenticationGateway({
     () => {
       if (
         previousViewReference.current
-        === panelView
+          === panelView
       ) {
         return;
       }
@@ -920,8 +902,8 @@ export function AuthenticationGateway({
       );
     },
     [
-      panelView,
       onViewChange,
+      panelView,
     ],
   );
 
@@ -979,8 +961,7 @@ export function AuthenticationGateway({
             KeyboardEvent,
         ): void => {
           if (
-            event.key
-            !== "Escape"
+            event.key !== "Escape"
           ) {
             return;
           }
@@ -1003,8 +984,8 @@ export function AuthenticationGateway({
       };
     },
     [
-      panelOpen,
       handleClose,
+      panelOpen,
     ],
   );
 
@@ -1042,16 +1023,13 @@ export function AuthenticationGateway({
             : (
                 <EmailVerificationForm
                   accountId={
-                    verificationState
-                      .accountId
+                    verificationState.accountId
                   }
                   email={
-                    verificationState
-                      .email
+                    verificationState.email
                   }
                   username={
-                    verificationState
-                      .username
+                    verificationState.username
                   }
                   verificationExpiresAt={
                     verificationState
@@ -1093,7 +1071,7 @@ export function AuthenticationGateway({
               }
               onRequestSignIn={
                 passwordRecoveryRole
-                === "ADMIN"
+                  === "ADMIN"
                   ? openAdminSignIn
                   : openUserSignIn
               }
@@ -1107,15 +1085,13 @@ export function AuthenticationGateway({
             : (
                 <PasswordResetForm
                   resetToken={
-                    passwordResetState
-                      .resetToken
+                    passwordResetState.resetToken
                   }
                   locale={
                     locale
                   }
                   accountRole={
-                    passwordResetState
-                      .accountRole
+                    passwordResetState.accountRole
                   }
                   onSuccess={
                     handlePasswordResetSuccess
@@ -1169,6 +1145,94 @@ export function AuthenticationGateway({
     children !== undefined
     && children !== null;
 
+  const renderedContent =
+    hasCustomContent
+      ? children
+      : defaultContent;
+
+  const shellConfiguration:
+    ShellConfiguration
+    | null =
+      hasCustomContent
+        ? null
+
+        : panelView
+          === "USER_SIGN_IN"
+          ? {
+              view:
+                "USER_SIGN_IN",
+
+              panelTitle:
+                shellTranslations(
+                  "userSignIn.title",
+                ),
+
+              panelDescription:
+                shellTranslations(
+                  "userSignIn.description",
+                ),
+
+              panelActionLabel:
+                shellTranslations(
+                  "userSignIn.action",
+                ),
+
+              onPanelAction:
+                openUserRegistration,
+            }
+
+          : panelView
+            === "USER_REGISTRATION"
+            ? {
+                view:
+                  "USER_REGISTRATION",
+
+                panelTitle:
+                  shellTranslations(
+                    "userRegistration.title",
+                  ),
+
+                panelDescription:
+                  shellTranslations(
+                    "userRegistration.description",
+                  ),
+
+                panelActionLabel:
+                  shellTranslations(
+                    "userRegistration.action",
+                  ),
+
+                onPanelAction:
+                  openUserSignIn,
+              }
+
+            : panelView
+              === "ADMIN_SIGN_IN"
+              ? {
+                  view:
+                    "ADMIN_SIGN_IN",
+
+                  panelTitle:
+                    shellTranslations(
+                      "adminSignIn.title",
+                    ),
+
+                  panelDescription:
+                    shellTranslations(
+                      "adminSignIn.description",
+                    ),
+
+                  panelActionLabel:
+                    shellTranslations(
+                      "adminSignIn.action",
+                    ),
+
+                  onPanelAction:
+                    openUserSignIn,
+                }
+
+              : null;
+
   return (
     <section
       ref={
@@ -1214,27 +1278,63 @@ export function AuthenticationGateway({
         " ",
       )}
     >
-      <header>
-        <button
-          type="button"
-          onClick={
-            handleClose
+      {shellConfiguration ? (
+        <AuthenticationShell
+          view={
+            shellConfiguration.view
           }
-          aria-label={
+          locale={
+            locale
+          }
+          panelTitle={
+            shellConfiguration.panelTitle
+          }
+          panelDescription={
+            shellConfiguration.panelDescription
+          }
+          panelActionLabel={
+            shellConfiguration.panelActionLabel
+          }
+          panelActionAriaLabel={
+            shellConfiguration.panelActionLabel
+          }
+          closeLabel={
             translations(
               "close",
             )
           }
+          onClose={
+            handleClose
+          }
+          onPanelAction={
+            shellConfiguration.onPanelAction
+          }
         >
-          {translations(
-            "close",
-          )}
-        </button>
-      </header>
+          {renderedContent}
+        </AuthenticationShell>
+      ) : (
+        <>
+          <header>
+            <button
+              type="button"
+              onClick={
+                handleClose
+              }
+              aria-label={
+                translations(
+                  "close",
+                )
+              }
+            >
+              {translations(
+                "close",
+              )}
+            </button>
+          </header>
 
-      {hasCustomContent
-        ? children
-        : defaultContent}
+          {renderedContent}
+        </>
+      )}
     </section>
   );
 }

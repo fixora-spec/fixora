@@ -1,4 +1,12 @@
 import {
+  createHash,
+} from "node:crypto";
+
+import {
+  isIP,
+} from "node:net";
+
+import {
   NextResponse,
 } from "next/server";
 
@@ -25,6 +33,16 @@ import {
 import {
   searchAssistantKnowledge,
 } from "@/lib/assistant/search-assistant-knowledge";
+
+import {
+  isJsonBodyError,
+  parseJsonBody,
+} from "@/lib/http/parse-json-body";
+
+import {
+  isRequestOriginError,
+  verifyRequestOrigin,
+} from "@/lib/http/verify-request-origin";
 
 import type {
   AssistantErrorCode,
@@ -61,6 +79,39 @@ const SENSITIVE_TOKEN_PATTERN =
 
 const SENSITIVE_PAYMENT_PATTERN =
   /\b(?:cvv|cvc|n[uú]mero\s+de\s+tarjeta|card\s+number)\s*(?:es|is|:|=)\s*\S+/iu;
+
+const SENSITIVE_PRIVATE_KEY_PATTERN =
+  /-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/iu;
+
+const SENSITIVE_AUTHORIZATION_PATTERN =
+  /\b(?:authorization|autorizaci[oó]n)\s*:\s*(?:bearer|basic)\s+\S+/iu;
+
+const SENSITIVE_JWT_PATTERN =
+  /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/u;
+
+const ASSISTANT_MAXIMUM_BODY_BYTES = 24 * 1024;
+const RATE_LIMIT_WINDOW_MILLISECONDS = 60_000;
+const RATE_LIMIT_MAXIMUM_REQUESTS = 30;
+const RATE_LIMIT_MAXIMUM_ENTRIES = 5_000;
+const RATE_LIMIT_CLEANUP_INTERVAL = 100;
+
+type AssistantRateLimitEntry = {
+  count: number;
+  windowStartedAt: number;
+  lastSeenAt: number;
+};
+
+type AssistantRateLimitDecision = {
+  allowed: boolean;
+  retryAfterSeconds: number;
+};
+
+const assistantRateLimitEntries = new Map<
+  string,
+  AssistantRateLimitEntry
+>();
+
+let assistantRateLimitRequestCount = 0;
 
 type JsonRecord =
   Record<
@@ -112,11 +163,15 @@ function isAssistantHistoryMessage(
     value.role === "user"
     || value.role === "assistant";
 
-  const validContent =
+  const content =
     typeof value.content === "string"
-    && value.content.trim().length > 0
-    && value.content.trim().length
-      <= ASSISTANT_CONFIG.maxMessageLength;
+      ? value.content.trim()
+      : "";
+
+  const validContent =
+    content.length > 0
+    && content.length <= ASSISTANT_CONFIG.maxHistoryMessageLength
+    && !/[\0]/u.test(content);
 
   return (
     validRole
@@ -124,74 +179,65 @@ function isAssistantHistoryMessage(
   );
 }
 
-async function readJsonBody(
-  request: Request,
-): Promise<unknown | null> {
-  try {
-    return await request.json();
-  } catch {
-    return null;
-  }
-}
-
 function parseAssistantRequest(
   value: unknown,
 ): AssistantRequest | null {
   if (
-    !isRecord(
-      value,
-    )
-    || typeof value.message
-      !== "string"
-    || !isAssistantLocale(
-      value.locale,
-    )
+    !isRecord(value)
+    || typeof value.message !== "string"
+    || !isAssistantLocale(value.locale)
   ) {
     return null;
   }
 
-  const history =
-    Array.isArray(
-      value.history,
-    )
-      ? value.history
-          .filter(
-            isAssistantHistoryMessage,
-          )
-          .slice(
-            -ASSISTANT_CONFIG
-              .maxHistoryMessages,
-          )
-          .map(
-            (
-              historyMessage,
-            ): AssistantHistoryMessage => ({
-              role:
-                historyMessage.role,
+  if (
+    value.history !== undefined
+    && !Array.isArray(value.history)
+  ) {
+    return null;
+  }
 
-              content:
-                historyMessage
-                  .content
-                  .trim(),
-            }),
-          )
-      : undefined;
+  const rawHistory =
+    Array.isArray(value.history)
+      ? value.history.slice(
+          -ASSISTANT_CONFIG.maxHistoryMessages,
+        )
+      : [];
+
+  if (!rawHistory.every(isAssistantHistoryMessage)) {
+    return null;
+  }
+
+  const history: AssistantHistoryMessage[] =
+    rawHistory.map((historyMessage) => ({
+      role: historyMessage.role,
+      content: historyMessage.content.trim(),
+    }));
 
   return {
-    message:
-      value.message,
-
-    locale:
-      value.locale,
-
-    history,
+    message: value.message,
+    locale: value.locale,
+    ...(history.length > 0 ? { history } : {}),
   };
+}
+function createResponseHeaders(
+  initialHeaders?: HeadersInit,
+): Headers {
+  const headers = new Headers(initialHeaders);
+
+  headers.set("Cache-Control", "no-store, max-age=0");
+  headers.set("Pragma", "no-cache");
+  headers.set("Expires", "0");
+  headers.set("X-Content-Type-Options", "nosniff");
+
+  return headers;
 }
 
 function createErrorResponse(
   error: string,
   code: AssistantErrorCode,
   status: number,
+  headers?: HeadersInit,
 ): NextResponse {
   return NextResponse.json(
     {
@@ -200,38 +246,123 @@ function createErrorResponse(
     },
     {
       status,
-
-      headers: {
-        "Cache-Control":
-          "no-store",
-
-        Pragma:
-          "no-cache",
-      },
+      headers: createResponseHeaders(headers),
     },
   );
 }
-
 function createSuccessResponse(
   response: AssistantResponse,
 ): NextResponse {
   return NextResponse.json(
     response,
     {
-      status:
-        200,
-
-      headers: {
-        "Cache-Control":
-          "no-store",
-
-        Pragma:
-          "no-cache",
-      },
+      status: 200,
+      headers: createResponseHeaders(),
     },
   );
 }
 
+function normalizeClientIp(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+
+  const candidate = value.split(",", 1)[0]?.trim() ?? "";
+
+  return isIP(candidate) > 0
+    ? candidate
+    : null;
+}
+
+function getClientRateLimitKey(request: Request): string {
+  const clientIp =
+    normalizeClientIp(request.headers.get("cf-connecting-ip"))
+    ?? normalizeClientIp(request.headers.get("x-real-ip"))
+    ?? normalizeClientIp(request.headers.get("x-forwarded-for"))
+    ?? "unknown";
+
+  return createHash("sha256")
+    .update(clientIp, "utf8")
+    .digest("hex");
+}
+
+function cleanupAssistantRateLimitEntries(now: number): void {
+  for (const [key, entry] of assistantRateLimitEntries) {
+    if (now - entry.lastSeenAt > RATE_LIMIT_WINDOW_MILLISECONDS * 2) {
+      assistantRateLimitEntries.delete(key);
+    }
+  }
+
+  if (assistantRateLimitEntries.size <= RATE_LIMIT_MAXIMUM_ENTRIES) {
+    return;
+  }
+
+  const entriesByAge = [...assistantRateLimitEntries.entries()]
+    .sort((first, second) => first[1].lastSeenAt - second[1].lastSeenAt);
+
+  const entriesToRemove =
+    assistantRateLimitEntries.size - RATE_LIMIT_MAXIMUM_ENTRIES;
+
+  for (const [key] of entriesByAge.slice(0, entriesToRemove)) {
+    assistantRateLimitEntries.delete(key);
+  }
+}
+
+function consumeAssistantRateLimit(
+  request: Request,
+): AssistantRateLimitDecision {
+  const now = Date.now();
+  const key = getClientRateLimitKey(request);
+  const currentEntry = assistantRateLimitEntries.get(key);
+
+  assistantRateLimitRequestCount += 1;
+
+  if (
+    assistantRateLimitRequestCount % RATE_LIMIT_CLEANUP_INTERVAL === 0
+    || assistantRateLimitEntries.size > RATE_LIMIT_MAXIMUM_ENTRIES
+  ) {
+    cleanupAssistantRateLimitEntries(now);
+  }
+
+  if (
+    !currentEntry
+    || now - currentEntry.windowStartedAt >= RATE_LIMIT_WINDOW_MILLISECONDS
+  ) {
+    assistantRateLimitEntries.set(key, {
+      count: 1,
+      windowStartedAt: now,
+      lastSeenAt: now,
+    });
+
+    return {
+      allowed: true,
+      retryAfterSeconds: 0,
+    };
+  }
+
+  currentEntry.lastSeenAt = now;
+
+  if (currentEntry.count >= RATE_LIMIT_MAXIMUM_REQUESTS) {
+    return {
+      allowed: false,
+      retryAfterSeconds: Math.max(
+        1,
+        Math.ceil(
+          (RATE_LIMIT_WINDOW_MILLISECONDS
+            - (now - currentEntry.windowStartedAt))
+          / 1_000,
+        ),
+      ),
+    };
+  }
+
+  currentEntry.count += 1;
+
+  return {
+    allowed: true,
+    retryAfterSeconds: 0,
+  };
+}
 function containsSensitiveCredentials(
   message: string,
 ): boolean {
@@ -248,6 +379,9 @@ function containsSensitiveCredentials(
     || SENSITIVE_PAYMENT_PATTERN.test(
       message,
     )
+    || SENSITIVE_PRIVATE_KEY_PATTERN.test(message)
+    || SENSITIVE_AUTHORIZATION_PATTERN.test(message)
+    || SENSITIVE_JWT_PATTERN.test(message)
   );
 }
 
@@ -804,29 +938,59 @@ function buildTranslations(
 export async function POST(
   request: Request,
 ): Promise<NextResponse> {
-  const requestBody =
-    await readJsonBody(
-      request,
-    );
+  let requestBody: unknown;
 
-  if (
-    requestBody === null
-  ) {
+  try {
+    verifyRequestOrigin(request);
+
+    const rateLimitDecision = consumeAssistantRateLimit(request);
+
+    if (!rateLimitDecision.allowed) {
+      return createErrorResponse(
+        "Has enviado demasiadas solicitudes. Espera un momento e inténtalo nuevamente.",
+        "INVALID_REQUEST",
+        429,
+        {
+          "Retry-After": String(rateLimitDecision.retryAfterSeconds),
+        },
+      );
+    }
+
+    requestBody = await parseJsonBody(request, {
+      maximumBytes: ASSISTANT_MAXIMUM_BODY_BYTES,
+      requireObject: true,
+    });
+  } catch (error) {
+    if (isRequestOriginError(error)) {
+      return createErrorResponse(
+        "El origen de la solicitud no está autorizado.",
+        "INVALID_REQUEST",
+        error.status,
+      );
+    }
+
+    if (isJsonBodyError(error)) {
+      return createErrorResponse(
+        error.code === "BODY_TOO_LARGE"
+          ? "La solicitud del asistente supera el tamaño permitido."
+          : "La solicitud contiene datos JSON inválidos.",
+        error.code === "BODY_TOO_LARGE"
+          ? "MESSAGE_TOO_LONG"
+          : "INVALID_REQUEST",
+        error.status,
+      );
+    }
+
     return createErrorResponse(
-      "La solicitud contiene datos inválidos.",
+      "No se pudo validar la solicitud del asistente.",
       "INVALID_REQUEST",
       400,
     );
   }
 
-  const assistantRequest =
-    parseAssistantRequest(
-      requestBody,
-    );
+  const assistantRequest = parseAssistantRequest(requestBody);
 
-  if (
-    assistantRequest === null
-  ) {
+  if (assistantRequest === null) {
     return createErrorResponse(
       "La solicitud del asistente no es válida.",
       "INVALID_REQUEST",
@@ -834,134 +998,91 @@ export async function POST(
     );
   }
 
-  const message =
-    assistantRequest
-      .message
-      .trim();
+  const message = assistantRequest.message.trim();
+  const { locale } = assistantRequest;
 
-  const {
-    locale,
-  } = assistantRequest;
-
-  if (
-    message.length === 0
-  ) {
+  if (message.length === 0) {
     return createErrorResponse(
       locale === "es"
         ? "El mensaje no puede estar vacío."
         : "The message cannot be empty.",
-
       "EMPTY_MESSAGE",
       400,
     );
   }
 
-  if (
-    message.length
-    > ASSISTANT_CONFIG
-      .maxMessageLength
-  ) {
+  if (message.length > ASSISTANT_CONFIG.maxMessageLength) {
     return createErrorResponse(
       locale === "es"
         ? "El mensaje supera el límite permitido."
         : "The message exceeds the allowed limit.",
-
       "MESSAGE_TOO_LONG",
       413,
     );
   }
 
+  const containsSensitiveHistory =
+    assistantRequest.history?.some((historyMessage) =>
+      containsSensitiveCredentials(historyMessage.content),
+    ) ?? false;
+
   try {
     if (
-      containsSensitiveCredentials(
-        message,
-      )
+      containsSensitiveCredentials(message)
+      || containsSensitiveHistory
     ) {
       return createSuccessResponse(
-        buildSensitiveInformationResponse(
-          locale,
-        ),
+        buildSensitiveInformationResponse(locale),
       );
     }
 
-    const authAssistanceResponse =
-      buildAuthAssistanceResponse(
-        message,
-        locale,
-      );
+    const authAssistanceResponse = buildAuthAssistanceResponse(
+      message,
+      locale,
+    );
 
-    if (
-      authAssistanceResponse
-    ) {
-      return createSuccessResponse(
-        authAssistanceResponse,
-      );
+    if (authAssistanceResponse) {
+      return createSuccessResponse(authAssistanceResponse);
     }
 
     const {
       translations,
       spanishResults,
       englishResults,
-    } = buildTranslations(
-      message,
-    );
+    } = buildTranslations(message);
 
     const localizedResults =
       locale === "es"
         ? spanishResults
         : englishResults;
 
-    const response:
-      AssistantResponse = {
-        message:
-          translations[
-            locale
-          ],
-
-        translations,
-
-        sources:
-          buildSources(
-            localizedResults,
-          ),
+    const response: AssistantResponse = {
+      message: translations[locale],
+      translations,
+      sources: buildSources(localizedResults),
     };
 
-    return createSuccessResponse(
-      response,
-    );
+    return createSuccessResponse(response);
   } catch {
     return createErrorResponse(
       locale === "es"
         ? "No pude procesar tu consulta. Inténtalo nuevamente."
         : "I could not process your question. Please try again.",
-
       "INTERNAL_ERROR",
       500,
     );
   }
 }
 
-export function GET():
-  NextResponse {
+export function GET(): NextResponse {
   return NextResponse.json(
     {
-      name:
-        ASSISTANT_CONFIG.name,
-
-      status:
-        "available",
+      name: ASSISTANT_CONFIG.name,
+      status: "available",
     },
     {
-      status:
-        200,
-
-      headers: {
-        "Cache-Control":
-          "no-store",
-
-        Pragma:
-          "no-cache",
-      },
+      status: 200,
+      headers: createResponseHeaders(),
     },
   );
 }

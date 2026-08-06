@@ -1,33 +1,53 @@
-import { NextResponse } from "next/server";
+import type {
+  NextResponse,
+} from "next/server";
 
 import {
   AUTH_RATE_LIMIT_ACTIONS,
   AUTH_REQUEST_LIMITS,
 } from "@/config/auth.config";
-import { requestPasswordReset } from "@/lib/auth/auth.service";
-import { consumeDefaultAuthRateLimit } from "@/lib/auth/rate-limit";
+
+import {
+  requestPasswordReset,
+} from "@/lib/auth/auth.service";
+
+import {
+  consumeDefaultAuthRateLimit,
+} from "@/lib/auth/rate-limit";
+
 import {
   getRequestIpAddress,
   getRequestUserAgent,
 } from "@/lib/auth/session";
+
 import {
   isAuthValidationError,
   validatePasswordResetRequest,
 } from "@/lib/auth/validation";
+
 import {
   createApiErrorResponse,
   createApiSuccessResponse,
 } from "@/lib/http/api-response";
+
 import {
   isJsonBodyError,
   parseJsonBody,
+  type JsonBodyError,
 } from "@/lib/http/parse-json-body";
+
 import {
   isRequestOriginError,
   verifyRequestOrigin,
 } from "@/lib/http/verify-request-origin";
-import type { AuthFieldError } from "@/types/auth";
-import type { Locale } from "@/types/locale";
+
+import type {
+  AuthFieldError,
+} from "@/types/auth";
+
+import type {
+  Locale,
+} from "@/types/locale";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -39,9 +59,11 @@ const BODY_LIMIT_BYTES = Math.min(
 
 type Messages = {
   forbiddenOrigin: string;
+  invalidContentType: string;
+  requestTooLarge: string;
+  invalidJson: string;
   invalidRequest: string;
   rateLimited: string;
-  accepted: string;
   internalError: string;
 };
 
@@ -54,10 +76,7 @@ function resolveLocale(
     && body !== null
     && !Array.isArray(body)
     && "locale" in body
-    && (
-      body.locale === "es"
-      || body.locale === "en"
-    )
+    && (body.locale === "es" || body.locale === "en")
   ) {
     return body.locale;
   }
@@ -71,50 +90,73 @@ function resolveLocale(
     return "en";
   }
 
-  return request.headers
+  const acceptedLanguage = request.headers
     .get("accept-language")
-    ?.toLowerCase()
-    .startsWith("en")
+    ?.trim()
+    .toLowerCase();
+
+  return acceptedLanguage?.startsWith("en")
     ? "en"
     : "es";
 }
 
-function getMessages(
-  locale: Locale,
-): Messages {
-  return locale === "en"
-    ? {
-        forbiddenOrigin:
-          "The request origin is not allowed.",
+function getMessages(locale: Locale): Messages {
+  if (locale === "en") {
+    return {
+      forbiddenOrigin:
+        "The request origin is not allowed.",
+      invalidContentType:
+        "The request must use an uncompressed JSON body.",
+      requestTooLarge:
+        "The request body is too large.",
+      invalidJson:
+        "The request body does not contain valid JSON.",
+      invalidRequest:
+        "Review the email address and account type and try again.",
+      rateLimited:
+        "Too many password-recovery requests were made. Please wait before trying again.",
+      internalError:
+        "Password recovery could not be requested at this time.",
+    };
+  }
 
-        invalidRequest:
-          "Review the email address and account type and try again.",
+  return {
+    forbiddenOrigin:
+      "El origen de la solicitud no está permitido.",
+    invalidContentType:
+      "La solicitud debe utilizar un cuerpo JSON sin compresión.",
+    requestTooLarge:
+      "El contenido de la solicitud es demasiado grande.",
+    invalidJson:
+      "El contenido de la solicitud no contiene un JSON válido.",
+    invalidRequest:
+      "Revisa el correo electrónico y el tipo de cuenta e inténtalo nuevamente.",
+    rateLimited:
+      "Se realizaron demasiadas solicitudes de recuperación. Espera antes de intentarlo nuevamente.",
+    internalError:
+      "No se pudo solicitar la recuperación de contraseña en este momento.",
+  };
+}
 
-        rateLimited:
-          "Too many password-recovery requests were made. Please wait before trying again.",
+function getJsonBodyErrorMessage(
+  error: JsonBodyError,
+  messages: Messages,
+): string {
+  if (error.status === 415) {
+    return messages.invalidContentType;
+  }
 
-        accepted:
-          "If an eligible account exists, a password-recovery code will be sent.",
+  switch (error.code) {
+    case "BODY_TOO_LARGE":
+      return messages.requestTooLarge;
 
-        internalError:
-          "Password recovery could not be requested at this time.",
-      }
-    : {
-        forbiddenOrigin:
-          "El origen de la solicitud no está permitido.",
+    case "INVALID_JSON":
+      return messages.invalidJson;
 
-        invalidRequest:
-          "Revisa el correo electrónico y el tipo de cuenta e inténtalo nuevamente.",
-
-        rateLimited:
-          "Se realizaron demasiadas solicitudes de recuperación. Espera antes de intentarlo nuevamente.",
-
-        accepted:
-          "Si existe una cuenta habilitada, se enviará un código de recuperación de contraseña.",
-
-        internalError:
-          "No se pudo solicitar la recuperación de contraseña en este momento.",
-      };
+    case "INVALID_REQUEST":
+    default:
+      return messages.invalidRequest;
+  }
 }
 
 function createValidationResponse(
@@ -134,9 +176,7 @@ function getRateLimitIdentifiers(
   email: string,
   accountRole: string,
 ): readonly string[] {
-  const ipAddress =
-    getRequestIpAddress(request)
-    ?? "unknown";
+  const ipAddress = getRequestIpAddress(request) ?? "unknown";
 
   return [
     `ip:${ipAddress}`,
@@ -145,44 +185,29 @@ function getRateLimitIdentifiers(
 }
 
 async function consumeRequestLimits(
-  request: Request,
-  email: string,
-  accountRole: string,
+  identifiers: readonly string[],
 ): Promise<{
   allowed: boolean;
   retryAfterSeconds: number;
 }> {
   let retryAfterSeconds = 0;
 
-  for (
-    const identifier
-    of getRateLimitIdentifiers(
-      request,
-      email,
-      accountRole,
-    )
-  ) {
-    const result =
-      await consumeDefaultAuthRateLimit(
-        AUTH_RATE_LIMIT_ACTIONS
-          .passwordResetRequest,
-
-        identifier,
-      );
+  for (const identifier of identifiers) {
+    const result = await consumeDefaultAuthRateLimit(
+      AUTH_RATE_LIMIT_ACTIONS.passwordResetRequest,
+      identifier,
+    );
 
     if (!result.allowed) {
-      retryAfterSeconds =
-        Math.max(
-          retryAfterSeconds,
-          result.retryAfterSeconds,
-        );
+      retryAfterSeconds = Math.max(
+        retryAfterSeconds,
+        result.retryAfterSeconds,
+      );
     }
   }
 
   return {
-    allowed:
-      retryAfterSeconds === 0,
-
+    allowed: retryAfterSeconds === 0,
     retryAfterSeconds,
   };
 }
@@ -190,8 +215,8 @@ async function consumeRequestLimits(
 export async function POST(
   request: Request,
 ): Promise<NextResponse> {
-  const fallbackLocale =
-    resolveLocale(request);
+  const fallbackLocale = resolveLocale(request);
+  const fallbackMessages = getMessages(fallbackLocale);
 
   try {
     verifyRequestOrigin(request);
@@ -200,72 +225,53 @@ export async function POST(
       return createApiErrorResponse({
         status: error.status,
         code: error.code,
-        message:
-          getMessages(fallbackLocale)
-            .forbiddenOrigin,
+        message: fallbackMessages.forbiddenOrigin,
       });
     }
 
     return createApiErrorResponse({
       status: 500,
       code: "INTERNAL_ERROR",
-      message:
-        getMessages(fallbackLocale)
-          .internalError,
+      message: fallbackMessages.internalError,
     });
   }
 
   let body: unknown;
 
   try {
-    body =
-      await parseJsonBody(
-        request,
-        {
-          maximumBytes:
-            BODY_LIMIT_BYTES,
-
-          requireObject:
-            true,
-        },
-      );
+    body = await parseJsonBody(
+      request,
+      {
+        maximumBytes: BODY_LIMIT_BYTES,
+        requireObject: true,
+      },
+    );
   } catch (error) {
     if (isJsonBodyError(error)) {
       return createApiErrorResponse({
         status: error.status,
         code: error.code,
-        message: error.message,
+        message: getJsonBodyErrorMessage(
+          error,
+          fallbackMessages,
+        ),
       });
     }
 
     return createApiErrorResponse({
       status: 500,
       code: "INTERNAL_ERROR",
-      message:
-        getMessages(fallbackLocale)
-          .internalError,
+      message: fallbackMessages.internalError,
     });
   }
 
-  const locale =
-    resolveLocale(
-      request,
-      body,
-    );
+  const locale = resolveLocale(request, body);
+  const messages = getMessages(locale);
 
-  const messages =
-    getMessages(locale);
-
-  let input:
-    ReturnType<
-      typeof validatePasswordResetRequest
-    >;
+  let input: ReturnType<typeof validatePasswordResetRequest>;
 
   try {
-    input =
-      validatePasswordResetRequest(
-        body,
-      );
+    input = validatePasswordResetRequest(body);
   } catch (error) {
     if (isAuthValidationError(error)) {
       return createValidationResponse(
@@ -281,49 +287,38 @@ export async function POST(
     });
   }
 
+  const rateLimitIdentifiers = getRateLimitIdentifiers(
+    request,
+    input.email,
+    input.accountRole,
+  );
+
   try {
-    const rateLimit =
-      await consumeRequestLimits(
-        request,
-        input.email,
-        input.accountRole,
-      );
+    const rateLimit = await consumeRequestLimits(
+      rateLimitIdentifiers,
+    );
 
     if (!rateLimit.allowed) {
       return createApiErrorResponse({
         status: 429,
         code: "RATE_LIMITED",
         message: messages.rateLimited,
-
-        retryAfterSeconds:
-          Math.max(
-            1,
-            rateLimit.retryAfterSeconds,
-          ),
+        retryAfterSeconds: Math.max(
+          1,
+          rateLimit.retryAfterSeconds,
+        ),
       });
     }
 
-    const result =
-      await requestPasswordReset(
-        input,
-        {
-          ipAddress:
-            getRequestIpAddress(
-              request,
-            ),
+    const result = await requestPasswordReset(
+      input,
+      {
+        ipAddress: getRequestIpAddress(request),
+        userAgent: getRequestUserAgent(request),
+      },
+    );
 
-          userAgent:
-            getRequestUserAgent(
-              request,
-            ),
-        },
-      );
-
-    return createApiSuccessResponse({
-      ...result,
-      message:
-        messages.accepted,
-    });
+    return createApiSuccessResponse(result);
   } catch {
     return createApiErrorResponse({
       status: 500,

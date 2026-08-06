@@ -1,48 +1,80 @@
-import {
+import type {
   NextResponse,
 } from "next/server";
 
 import {
+  AUTH_RATE_LIMIT_ACTIONS,
+  AUTH_REQUEST_LIMITS,
+  PERSON_NAME_RULES,
   USERNAME_RULES,
 } from "@/config/auth.config";
 
 import {
-  AuthServiceError,
   checkUsernameAvailability,
 } from "@/lib/auth/auth.service";
 
 import {
+  consumeDefaultAuthRateLimit,
+} from "@/lib/auth/rate-limit";
+
+import {
+  getRequestIpAddress,
+} from "@/lib/auth/session";
+
+import {
+  isAuthValidationError,
+  validatePersonName,
+} from "@/lib/auth/validation";
+
+import {
   generateUsernameCandidates,
+  validateUsername,
 } from "@/lib/auth/username";
 
-export const runtime =
-  "nodejs";
+import {
+  createApiErrorResponse,
+  createApiSuccessResponse,
+} from "@/lib/http/api-response";
 
-export const dynamic =
-  "force-dynamic";
+import {
+  isJsonBodyError,
+  parseJsonBody,
+  type JsonBodyError,
+} from "@/lib/http/parse-json-body";
 
-const MAXIMUM_REQUEST_BODY_BYTES =
-  8_192;
+import {
+  isRequestOriginError,
+  verifyRequestOrigin,
+} from "@/lib/http/verify-request-origin";
 
-const MAXIMUM_SUGGESTION_COUNT =
-  5;
+import type {
+  AuthFieldError,
+} from "@/types/auth";
 
-const MAXIMUM_HUMAN_NAME_LENGTH =
-  100;
+import type {
+  Locale,
+} from "@/types/locale";
 
-type JsonRecord =
-  Record<string, unknown>;
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-type SupportedLocale =
-  | "es"
-  | "en";
+const BODY_LIMIT_BYTES = Math.min(
+  AUTH_REQUEST_LIMITS.maximumJsonBodyBytes,
+  8_192,
+);
 
-type LocalizedMessages = {
+const MAXIMUM_SUGGESTION_COUNT = 5;
+const MAXIMUM_QUERY_VALUE_LENGTH = 256;
+const UNKNOWN_IP_IDENTIFIER = "unknown";
+
+type Messages = {
   forbiddenOrigin: string;
   invalidContentType: string;
   requestTooLarge: string;
   invalidJson: string;
   invalidUsername: string;
+  invalidFirstNames: string;
+  rateLimited: string;
   internalError: string;
 };
 
@@ -53,569 +85,428 @@ type SuggestionInput = {
   locale: unknown;
 };
 
-function isRecord(
-  value: unknown,
-): value is JsonRecord {
-  return (
+function resolveLocale(
+  request: Request,
+  value?: unknown,
+): Locale {
+  if (value === "es" || value === "en") {
+    return value;
+  }
+
+  if (
     typeof value === "object"
     && value !== null
-    && !Array.isArray(
-      value,
-    )
-  );
-}
+    && !Array.isArray(value)
+    && "locale" in value
+    && (value.locale === "es" || value.locale === "en")
+  ) {
+    return value.locale;
+  }
 
-function resolveLocale(
-  value: unknown,
-): SupportedLocale {
-  return value === "en"
+  const explicitLocale = request.headers
+    .get("x-fixora-locale")
+    ?.trim()
+    .toLowerCase();
+
+  if (explicitLocale === "en") {
+    return "en";
+  }
+
+  return request.headers
+    .get("accept-language")
+    ?.trim()
+    .toLowerCase()
+    .startsWith("en")
     ? "en"
     : "es";
 }
 
-function getLocalizedMessages(
-  locale: SupportedLocale,
-): LocalizedMessages {
-  if (
-    locale === "en"
-  ) {
+function getMessages(locale: Locale): Messages {
+  if (locale === "en") {
     return {
-      forbiddenOrigin:
-        "The request origin is not allowed.",
-
+      forbiddenOrigin: "The request origin is not allowed.",
       invalidContentType:
-        "The request must use application/json.",
-
-      requestTooLarge:
-        "The request body is too large.",
-
-      invalidJson:
-        "The request body does not contain valid JSON.",
-
+        "The request must use an uncompressed JSON body.",
+      requestTooLarge: "The request body is too large.",
+      invalidJson: "The request body does not contain valid JSON.",
       invalidUsername:
         `Enter a username between ${USERNAME_RULES.minimumLength} and ${USERNAME_RULES.maximumLength} characters using only letters, numbers, periods, hyphens, or underscores.`,
-
+      invalidFirstNames:
+        `Enter valid first names of no more than ${PERSON_NAME_RULES.firstNamesMaximumLength} characters.`,
+      rateLimited:
+        "Too many username suggestions were requested. Please wait before trying again.",
       internalError:
         "Username suggestions could not be generated at this time.",
     };
   }
 
   return {
-    forbiddenOrigin:
-      "El origen de la solicitud no está permitido.",
-
+    forbiddenOrigin: "El origen de la solicitud no está permitido.",
     invalidContentType:
-      "La solicitud debe utilizar application/json.",
-
-    requestTooLarge:
-      "El contenido de la solicitud es demasiado grande.",
-
-    invalidJson:
-      "El contenido de la solicitud no contiene un JSON válido.",
-
+      "La solicitud debe utilizar un cuerpo JSON sin compresión.",
+    requestTooLarge: "El contenido de la solicitud es demasiado grande.",
+    invalidJson: "El contenido de la solicitud no contiene un JSON válido.",
     invalidUsername:
-      `Ingresa un nombre de pila de entre ${USERNAME_RULES.minimumLength} y ${USERNAME_RULES.maximumLength} caracteres usando solo letras, números, puntos, guiones o guiones bajos.`,
-
+      `Ingresa un nombre de usuario de entre ${USERNAME_RULES.minimumLength} y ${USERNAME_RULES.maximumLength} caracteres usando solo letras, números, puntos, guiones o guiones bajos.`,
+    invalidFirstNames:
+      `Ingresa nombres válidos de hasta ${PERSON_NAME_RULES.firstNamesMaximumLength} caracteres.`,
+    rateLimited:
+      "Se solicitaron demasiadas sugerencias de nombre de usuario. Espera antes de intentarlo nuevamente.",
     internalError:
-      "No se pudieron generar sugerencias de nombres de pila.",
+      "No se pudieron generar sugerencias de nombres de usuario.",
   };
 }
 
-function hasTrustedRequestOrigin(
-  request: Request,
-): boolean {
-  const originHeader =
-    request.headers.get(
-      "origin",
-    );
-
-  const fetchSiteHeader =
-    request.headers.get(
-      "sec-fetch-site",
-    );
-
-  if (
-    originHeader === null
-  ) {
-    return (
-      fetchSiteHeader === null
-      || fetchSiteHeader
-        === "same-origin"
-      || fetchSiteHeader
-        === "none"
-    );
+function getJsonBodyErrorMessage(
+  error: JsonBodyError,
+  messages: Messages,
+): string {
+  if (error.status === 415) {
+    return messages.invalidContentType;
   }
 
-  try {
-    return (
-      new URL(
-        originHeader,
-      ).origin
-      === new URL(
-        request.url,
-      ).origin
-    );
-  } catch {
-    return false;
+  switch (error.code) {
+    case "BODY_TOO_LARGE":
+      return messages.requestTooLarge;
+
+    case "INVALID_JSON":
+      return messages.invalidJson;
+
+    case "INVALID_REQUEST":
+    default:
+      return messages.invalidUsername;
   }
 }
 
-function hasJsonContentType(
-  request: Request,
-): boolean {
-  return (
-    request.headers
-      .get(
-        "content-type",
-      )
-      ?.toLowerCase()
-      .includes(
-        "application/json",
-      )
-    ?? false
-  );
-}
-
-function exceedsMaximumBodySize(
-  request: Request,
-): boolean {
-  const contentLength =
-    Number.parseInt(
-      request.headers.get(
-        "content-length",
-      ) ?? "",
-      10,
-    );
-
-  return (
-    Number.isFinite(
-      contentLength,
-    )
-    && contentLength
-      > MAXIMUM_REQUEST_BODY_BYTES
-  );
-}
-
-function normalizeUsername(
-  value: unknown,
-): string | null {
+function readLimitedString(value: unknown): string | null {
   if (
     typeof value !== "string"
+    || value.length > MAXIMUM_QUERY_VALUE_LENGTH
+    || /[\r\n\0]/u.test(value)
   ) {
     return null;
   }
 
-  const username =
-    value
-      .trim()
-      .normalize(
-        "NFC",
-      );
-
-  if (
-    username.length
-      < USERNAME_RULES.minimumLength
-    || username.length
-      > USERNAME_RULES.maximumLength
-    || !USERNAME_RULES
-      .allowedPattern
-      .test(
-        username,
-      )
-  ) {
-    return null;
-  }
-
-  return username;
+  return value;
 }
 
-function normalizeFirstNames(
-  value: unknown,
-): string | undefined {
-  if (
-    typeof value !== "string"
-  ) {
-    return undefined;
+function normalizeSuggestionCount(value: unknown): number {
+  if (typeof value === "undefined" || value === null || value === "") {
+    return MAXIMUM_SUGGESTION_COUNT;
   }
 
-  const firstNames =
-    value
-      .trim()
-      .normalize(
-        "NFC",
-      )
-      .replace(
-        /\s+/gu,
-        " ",
-      )
-      .slice(
-        0,
-        MAXIMUM_HUMAN_NAME_LENGTH,
-      );
+  const parsedValue = typeof value === "number"
+    ? value
+    : typeof value === "string" && /^\d+$/u.test(value.trim())
+      ? Number.parseInt(value.trim(), 10)
+      : Number.NaN;
 
-  return firstNames.length > 0
-    ? firstNames
-    : undefined;
-}
-
-function normalizeSuggestionCount(
-  value: unknown,
-): number {
-  const parsedValue =
-    typeof value === "number"
-      ? value
-      : typeof value === "string"
-        ? Number.parseInt(
-            value,
-            10,
-          )
-        : Number.NaN;
-
-  if (
-    !Number.isInteger(
-      parsedValue,
-    )
-  ) {
+  if (!Number.isSafeInteger(parsedValue)) {
     return MAXIMUM_SUGGESTION_COUNT;
   }
 
   return Math.min(
     MAXIMUM_SUGGESTION_COUNT,
-    Math.max(
-      1,
-      parsedValue,
-    ),
+    Math.max(1, parsedValue),
   );
 }
 
-function createSuccessResponse(
-  suggestions:
-    readonly string[],
-): NextResponse {
-  return NextResponse.json(
-    {
-      success:
-        true,
-
-      data: {
-        suggestions,
-      },
-    },
-    {
-      status:
-        200,
-
-      headers: {
-        "Cache-Control":
-          "no-store",
-
-        Pragma:
-          "no-cache",
-      },
-    },
-  );
-}
-
-function createErrorResponse(
-  status: number,
-  code: string,
-  message: string,
-): NextResponse {
-  return NextResponse.json(
-    {
-      success:
-        false,
-
-      error: {
-        code,
-        message,
-
-        fieldErrors:
-          code === "INVALID_USERNAME"
-            ? [
-                {
-                  field:
-                    "username",
-
-                  code:
-                    "INVALID_USERNAME",
-                },
-              ]
-            : [],
-      },
-    },
-    {
-      status,
-
-      headers: {
-        "Cache-Control":
-          "no-store",
-
-        Pragma:
-          "no-cache",
-      },
-    },
-  );
-}
-
-function createServiceErrorResponse(
-  error: unknown,
-  messages: LocalizedMessages,
-): NextResponse {
-  if (
-    error instanceof AuthServiceError
-  ) {
-    return createErrorResponse(
-      error.status,
-      error.code,
-      error.message,
-    );
+function normalizeFirstNames(
+  value: unknown,
+): {
+  value: string | undefined;
+  fieldErrors: readonly AuthFieldError[];
+} {
+  if (typeof value === "undefined" || value === null || value === "") {
+    return {
+      value: undefined,
+      fieldErrors: [],
+    };
   }
 
-  console.error(
-    "USERNAME_SUGGESTIONS_ERROR",
-    error,
-  );
+  const rawValue = readLimitedString(value);
 
-  return createErrorResponse(
-    500,
-    "INTERNAL_SERVER_ERROR",
-    messages.internalError,
-  );
-}
-
-async function handleSuggestionRequest({
-  username:
-    usernameValue,
-
-  firstNames:
-    firstNamesValue,
-
-  count:
-    countValue,
-
-  locale:
-    localeValue,
-}: SuggestionInput): Promise<NextResponse> {
-  const locale =
-    resolveLocale(
-      localeValue,
-    );
-
-  const messages =
-    getLocalizedMessages(
-      locale,
-    );
-
-  const username =
-    normalizeUsername(
-      usernameValue,
-    );
-
-  if (
-    username === null
-  ) {
-    return createErrorResponse(
-      400,
-      "INVALID_USERNAME",
-      messages.invalidUsername,
-    );
+  if (rawValue === null) {
+    return {
+      value: undefined,
+      fieldErrors: [
+        {
+          field: "firstNames",
+          code: "INVALID_NAME",
+        },
+      ],
+    };
   }
-
-  const firstNames =
-    normalizeFirstNames(
-      firstNamesValue,
-    );
-
-  const count =
-    normalizeSuggestionCount(
-      countValue,
-    );
 
   try {
-    const candidates =
-      generateUsernameCandidates({
-        requestedUsername:
-          username,
+    return {
+      value: validatePersonName(rawValue, "firstNames"),
+      fieldErrors: [],
+    };
+  } catch (error) {
+    if (isAuthValidationError(error)) {
+      return {
+        value: undefined,
+        fieldErrors: error.fieldErrors,
+      };
+    }
 
-        firstNames,
+    throw error;
+  }
+}
 
-        maximumCandidates:
-          Math.max(
-            12,
-            count * 4,
-          ),
+function getRateLimitIdentifiers(
+  request: Request,
+  normalizedUsername: string,
+): readonly string[] {
+  const ipAddress = getRequestIpAddress(request) ?? UNKNOWN_IP_IDENTIFIER;
+
+  return [
+    `suggestions:ip:${ipAddress}`,
+    `suggestions:username:${normalizedUsername || "invalid"}`,
+  ];
+}
+
+async function consumeSuggestionLimits(
+  identifiers: readonly string[],
+): Promise<{
+  allowed: boolean;
+  retryAfterSeconds: number;
+}> {
+  let retryAfterSeconds = 0;
+
+  for (const identifier of identifiers) {
+    const result = await consumeDefaultAuthRateLimit(
+      AUTH_RATE_LIMIT_ACTIONS.usernameAvailability,
+      identifier,
+    );
+
+    if (!result.allowed) {
+      retryAfterSeconds = Math.max(
+        retryAfterSeconds,
+        result.retryAfterSeconds,
+      );
+    }
+  }
+
+  return {
+    allowed: retryAfterSeconds === 0,
+    retryAfterSeconds,
+  };
+}
+
+async function handleSuggestionRequest(
+  request: Request,
+  input: SuggestionInput,
+): Promise<NextResponse> {
+  const locale = resolveLocale(request, input.locale);
+  const messages = getMessages(locale);
+  const rawUsername = readLimitedString(input.username);
+
+  if (rawUsername === null) {
+    return createApiErrorResponse({
+      status: 400,
+      code: "INVALID_USERNAME",
+      message: messages.invalidUsername,
+      fieldErrors: [
+        {
+          field: "username",
+          code: "INVALID_USERNAME",
+        },
+      ],
+    });
+  }
+
+  const usernameValidation = validateUsername(rawUsername);
+
+  if (!usernameValidation.valid) {
+    return createApiErrorResponse({
+      status: 400,
+      code: "INVALID_USERNAME",
+      message: messages.invalidUsername,
+      fieldErrors: [
+        {
+          field: "username",
+          code: "INVALID_USERNAME",
+        },
+      ],
+    });
+  }
+
+  let firstNamesResult: ReturnType<typeof normalizeFirstNames>;
+
+  try {
+    firstNamesResult = normalizeFirstNames(input.firstNames);
+  } catch {
+    return createApiErrorResponse({
+      status: 500,
+      code: "INTERNAL_ERROR",
+      message: messages.internalError,
+    });
+  }
+
+  if (firstNamesResult.fieldErrors.length > 0) {
+    return createApiErrorResponse({
+      status: 400,
+      code: "VALIDATION_ERROR",
+      message: messages.invalidFirstNames,
+      fieldErrors: firstNamesResult.fieldErrors,
+    });
+  }
+
+  const count = normalizeSuggestionCount(input.count);
+  const identifiers = getRateLimitIdentifiers(
+    request,
+    usernameValidation.normalizedValue,
+  );
+
+  try {
+    const rateLimit = await consumeSuggestionLimits(identifiers);
+
+    if (!rateLimit.allowed) {
+      return createApiErrorResponse({
+        status: 429,
+        code: "RATE_LIMITED",
+        message: messages.rateLimited,
+        retryAfterSeconds: Math.max(
+          1,
+          rateLimit.retryAfterSeconds,
+        ),
       });
+    }
 
-    const suggestions:
-      string[] = [];
+    const candidates = generateUsernameCandidates({
+      requestedUsername: usernameValidation.value,
+      firstNames: firstNamesResult.value,
+      maximumCandidates: Math.max(12, count * 4),
+    });
 
-    for (
-      const candidate
-      of candidates
-    ) {
-      const availability =
-        await checkUsernameAvailability(
-          candidate,
-          false,
-        );
+    const suggestions: string[] = [];
 
-      if (
-        availability.available
-      ) {
-        suggestions.push(
-          candidate,
-        );
+    for (const candidate of candidates) {
+      const availability = await checkUsernameAvailability(
+        candidate,
+        false,
+      );
+
+      if (availability.available) {
+        suggestions.push(candidate);
       }
 
-      if (
-        suggestions.length
-          >= count
-      ) {
+      if (suggestions.length >= count) {
         break;
       }
     }
 
-    return createSuccessResponse(
-      suggestions,
-    );
-  } catch (error) {
-    return createServiceErrorResponse(
-      error,
-      messages,
-    );
+    return createApiSuccessResponse({
+      suggestions: Object.freeze([...suggestions]) as readonly string[],
+    });
+  } catch {
+    return createApiErrorResponse({
+      status: 500,
+      code: "INTERNAL_ERROR",
+      message: messages.internalError,
+    });
   }
 }
 
 export async function GET(
   request: Request,
 ): Promise<NextResponse> {
-  const searchParameters =
-    new URL(
-      request.url,
-    ).searchParams;
+  const requestUrl = new URL(request.url);
+  const locale = resolveLocale(
+    request,
+    requestUrl.searchParams.get("locale"),
+  );
 
-  return handleSuggestionRequest({
+  try {
+    verifyRequestOrigin(request, {
+      allowSafeMethods: false,
+      requireOrigin: false,
+    });
+  } catch (error) {
+    if (isRequestOriginError(error)) {
+      return createApiErrorResponse({
+        status: error.status,
+        code: error.code,
+        message: getMessages(locale).forbiddenOrigin,
+      });
+    }
+
+    return createApiErrorResponse({
+      status: 500,
+      code: "INTERNAL_ERROR",
+      message: getMessages(locale).internalError,
+    });
+  }
+
+  return handleSuggestionRequest(request, {
     username:
-      searchParameters.get(
-        "username",
-      )
-      ?? searchParameters.get(
-        "baseUsername",
-      ),
-
+      requestUrl.searchParams.get("username")
+      ?? requestUrl.searchParams.get("baseUsername"),
     firstNames:
-      searchParameters.get(
-        "firstNames",
-      )
-      ?? searchParameters.get(
-        "firstName",
-      ),
-
+      requestUrl.searchParams.get("firstNames")
+      ?? requestUrl.searchParams.get("firstName"),
     count:
-      searchParameters.get(
-        "count",
-      )
-      ?? searchParameters.get(
-        "limit",
-      ),
-
-    locale:
-      searchParameters.get(
-        "locale",
-      ),
+      requestUrl.searchParams.get("count")
+      ?? requestUrl.searchParams.get("limit"),
+    locale,
   });
 }
 
 export async function POST(
   request: Request,
 ): Promise<NextResponse> {
-  const fallbackMessages =
-    getLocalizedMessages(
-      "es",
-    );
-
-  if (
-    !hasTrustedRequestOrigin(
-      request,
-    )
-  ) {
-    return createErrorResponse(
-      403,
-      "FORBIDDEN_ORIGIN",
-      fallbackMessages
-        .forbiddenOrigin,
-    );
-  }
-
-  if (
-    !hasJsonContentType(
-      request,
-    )
-  ) {
-    return createErrorResponse(
-      415,
-      "UNSUPPORTED_MEDIA_TYPE",
-      fallbackMessages
-        .invalidContentType,
-    );
-  }
-
-  if (
-    exceedsMaximumBodySize(
-      request,
-    )
-  ) {
-    return createErrorResponse(
-      413,
-      "REQUEST_BODY_TOO_LARGE",
-      fallbackMessages
-        .requestTooLarge,
-    );
-  }
-
-  let body:
-    JsonRecord;
+  const fallbackLocale = resolveLocale(request);
 
   try {
-    const bodyValue: unknown =
-      await request.json();
-
-    if (
-      !isRecord(
-        bodyValue,
-      )
-    ) {
-      throw new Error(
-        "INVALID_JSON_BODY",
-      );
+    verifyRequestOrigin(request);
+  } catch (error) {
+    if (isRequestOriginError(error)) {
+      return createApiErrorResponse({
+        status: error.status,
+        code: error.code,
+        message: getMessages(fallbackLocale).forbiddenOrigin,
+      });
     }
 
-    body =
-      bodyValue;
-  } catch {
-    return createErrorResponse(
-      400,
-      "INVALID_JSON_BODY",
-      fallbackMessages
-        .invalidJson,
-    );
+    return createApiErrorResponse({
+      status: 500,
+      code: "INTERNAL_ERROR",
+      message: getMessages(fallbackLocale).internalError,
+    });
   }
 
-  return handleSuggestionRequest({
-    username:
-      body.username
-      ?? body.baseUsername,
+  let body: Record<string, unknown>;
 
-    firstNames:
-      body.firstNames
-      ?? body.firstName,
+  try {
+    body = await parseJsonBody<Record<string, unknown>>(request, {
+      maximumBytes: BODY_LIMIT_BYTES,
+      requireObject: true,
+    });
+  } catch (error) {
+    if (isJsonBodyError(error)) {
+      return createApiErrorResponse({
+        status: error.status,
+        code: error.code,
+        message: getJsonBodyErrorMessage(
+          error,
+          getMessages(fallbackLocale),
+        ),
+      });
+    }
 
-    count:
-      body.count
-      ?? body.limit,
+    return createApiErrorResponse({
+      status: 500,
+      code: "INTERNAL_ERROR",
+      message: getMessages(fallbackLocale).internalError,
+    });
+  }
 
-    locale:
-      body.locale,
+  return handleSuggestionRequest(request, {
+    username: body.username ?? body.baseUsername,
+    firstNames: body.firstNames ?? body.firstName,
+    count: body.count ?? body.limit,
+    locale: body,
   });
 }
