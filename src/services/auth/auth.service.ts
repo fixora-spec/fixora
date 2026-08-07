@@ -345,8 +345,14 @@ function validatePasswordResetCodeResponse(
 ): PasswordResetCodeResponseData {
   const record = requireRecord(value);
   const resetToken = requireString(record.resetToken, 2_048);
+  const resetTokenParts = resetToken.split(".");
 
-  if (!/^[A-Za-z0-9_-]+$/u.test(resetToken)) {
+  if (
+    resetTokenParts.length !== 2
+    || resetTokenParts.some(
+      (part) => !part || !/^[A-Za-z0-9_-]+$/u.test(part),
+    )
+  ) {
     throw new Error("INVALID_RESPONSE_RESET_TOKEN");
   }
 

@@ -291,6 +291,15 @@ export function PasswordRecoveryForm({
     null,
   );
 
+  const [
+    rateLimitMessage,
+    setRateLimitMessage,
+  ] = useState<
+    string | null
+  >(
+    null,
+  );
+
   const {
     formattedTime:
       expirationFormattedTime,
@@ -319,6 +328,22 @@ export function PasswordRecoveryForm({
 
     stop:
       stopResendCountdown,
+  } = useVerificationCountdown(
+    0,
+  );
+
+  const {
+    remainingSeconds:
+      requestRateLimitRemainingSeconds,
+
+    formattedTime:
+      requestRateLimitFormattedTime,
+
+    start:
+      startRequestRateLimitCountdown,
+
+    stop:
+      stopRequestRateLimitCountdown,
   } = useVerificationCountdown(
     0,
   );
@@ -354,6 +379,9 @@ export function PasswordRecoveryForm({
     disabled
     || busy
     || status === "CODE_VERIFIED";
+
+  const requestRateLimited =
+    requestRateLimitRemainingSeconds > 0;
 
   const normalizedEmail =
     normalizeEmail(
@@ -492,6 +520,7 @@ export function PasswordRecoveryForm({
     async (): Promise<boolean> => {
       if (
         controlsDisabled
+        || requestRateLimited
       ) {
         return false;
       }
@@ -533,6 +562,10 @@ export function PasswordRecoveryForm({
       );
 
       setInformationMessage(
+        null,
+      );
+
+      setRateLimitMessage(
         null,
       );
 
@@ -578,6 +611,12 @@ export function PasswordRecoveryForm({
           ).toISOString(),
         );
 
+        stopRequestRateLimitCountdown();
+
+        setRateLimitMessage(
+          null,
+        );
+
         setCode(
           "",
         );
@@ -610,8 +649,51 @@ export function PasswordRecoveryForm({
           return false;
         }
 
+        if (
+          isAuthApiClientError(
+            error,
+          )
+          && error.code === "RATE_LIMITED"
+          && error.retryAfterSeconds !== null
+          && error.retryAfterSeconds > 0
+        ) {
+          setStatus(
+            "ERROR",
+          );
+
+          setErrorMessage(
+            null,
+          );
+
+          setInformationMessage(
+            null,
+          );
+
+          setRateLimitMessage(
+            error.message,
+          );
+
+          startRequestRateLimitCountdown(
+            Math.min(
+              86_400,
+              Math.max(
+                1,
+                Math.ceil(
+                  error.retryAfterSeconds,
+                ),
+              ),
+            ),
+          );
+
+          return false;
+        }
+
         setStatus(
           "ERROR",
+        );
+
+        setRateLimitMessage(
+          null,
         );
 
         setErrorMessage(
@@ -828,6 +910,7 @@ export function PasswordRecoveryForm({
     async (): Promise<void> => {
       if (
         controlsDisabled
+        || requestRateLimited
         || !resendAvailable
       ) {
         return;
@@ -906,6 +989,7 @@ export function PasswordRecoveryForm({
         }
         aria-describedby={
           errorMessage
+          || requestRateLimited
             ? messageId
             : undefined
         }
@@ -964,10 +1048,26 @@ export function PasswordRecoveryForm({
           </p>
         ) : null}
 
+        {requestRateLimited
+          && rateLimitMessage ? (
+          <p
+            id={messageId}
+            role="alert"
+            aria-live="polite"
+          >
+            {rateLimitMessage}
+            {" "}
+            {resolvedLocale === "en"
+              ? `Try again in ${requestRateLimitFormattedTime}.`
+              : `Podrás intentarlo nuevamente en ${requestRateLimitFormattedTime}.`}
+          </p>
+        ) : null}
+
         <button
           type="submit"
           disabled={
             controlsDisabled
+            || requestRateLimited
           }
         >
           {requestingCode
@@ -1007,6 +1107,7 @@ export function PasswordRecoveryForm({
       }
       aria-describedby={
         errorMessage
+        || requestRateLimited
           ? messageId
           : undefined
       }
@@ -1105,6 +1206,21 @@ export function PasswordRecoveryForm({
         </p>
       ) : null}
 
+      {requestRateLimited
+        && rateLimitMessage ? (
+        <p
+          id={messageId}
+          role="alert"
+          aria-live="polite"
+        >
+          {rateLimitMessage}
+          {" "}
+          {resolvedLocale === "en"
+            ? `Try again in ${requestRateLimitFormattedTime}.`
+            : `Podrás intentarlo nuevamente en ${requestRateLimitFormattedTime}.`}
+        </p>
+      ) : null}
+
       <button
         type="submit"
         disabled={
@@ -1128,6 +1244,7 @@ export function PasswordRecoveryForm({
         type="button"
         disabled={
           controlsDisabled
+          || requestRateLimited
           || !resendAvailable
         }
         onClick={

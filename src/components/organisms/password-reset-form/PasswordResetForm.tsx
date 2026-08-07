@@ -228,11 +228,15 @@ export function PasswordResetForm({
   const submitting =
     status === "SUBMITTING";
 
-  const controlsDisabled =
+  const formControlsDisabled =
     disabled
     || submitting
     || status === "SUCCESS"
     || normalizedResetToken === null;
+
+  const navigationControlsDisabled =
+    disabled
+    || submitting;
 
   const passwordsMatch =
     values.password.length > 0
@@ -668,7 +672,7 @@ export function PasswordResetForm({
             values.password
           }
           disabled={
-            controlsDisabled
+            formControlsDisabled
           }
           aria-invalid={
             Boolean(
@@ -726,7 +730,7 @@ export function PasswordResetForm({
               .passwordConfirmation
           }
           disabled={
-            controlsDisabled
+            formControlsDisabled
           }
           aria-invalid={
             Boolean(
@@ -774,26 +778,28 @@ export function PasswordResetForm({
         </p>
       ) : null}
 
-      <button
-        type="submit"
-        disabled={
-          controlsDisabled
-        }
-      >
-        {submitting
-          ? translations(
-              "actions.submitting",
-            )
-          : translations(
-              "actions.submit",
-            )}
-      </button>
+      {status !== "SUCCESS" ? (
+        <button
+          type="submit"
+          disabled={
+            formControlsDisabled
+          }
+        >
+          {submitting
+            ? translations(
+                "actions.submitting",
+              )
+            : translations(
+                "actions.submit",
+              )}
+        </button>
+      ) : null}
 
       {status === "SUCCESS" ? (
         <button
           type="button"
           disabled={
-            controlsDisabled
+            navigationControlsDisabled
           }
           onClick={
             handleSignInRequest
@@ -808,7 +814,7 @@ export function PasswordResetForm({
       <button
         type="button"
         disabled={
-          controlsDisabled
+          navigationControlsDisabled
         }
         onClick={
           handleRecoveryRequest

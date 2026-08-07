@@ -486,6 +486,7 @@ export function QuickActionsMenu({
 
           case "assistant": {
             closeMenu();
+            closeNotifications();
 
             setIsAssistantOpen(
               true,
@@ -496,6 +497,7 @@ export function QuickActionsMenu({
 
           case "notifications": {
             closeMenu();
+            closeAssistant();
 
             setIsNotificationsOpen(
               true,
@@ -574,6 +576,18 @@ export function QuickActionsMenu({
         showPrevious,
       ],
     );
+
+  const canShowPrivatePanels =
+    isAuthenticated
+    && !isAuthenticationOpen;
+
+  const isNotificationsPanelVisible =
+    isNotificationsOpen
+    && canShowPrivatePanels;
+
+  const isAssistantPanelVisible =
+    isAssistantOpen
+    && !isAuthenticationOpen;
 
   const languageCode =
     locale === "es"
@@ -709,8 +723,14 @@ export function QuickActionsMenu({
                     isOpen
                   }
                   isActive={
-                    isAssistant
-                    && isAssistantOpen
+                    (
+                      isAssistant
+                      && isAssistantOpen
+                    )
+                    || (
+                      isNotifications
+                      && isNotificationsOpen
+                    )
                   }
                   iconOverride={
                     isAppearance
@@ -806,9 +826,7 @@ export function QuickActionsMenu({
 
       <NotificationsPanel
         open={
-          isNotificationsOpen
-          && isAuthenticated
-          && !isAuthenticationOpen
+          isNotificationsPanelVisible
         }
         onClose={
           closeNotifications
@@ -823,8 +841,7 @@ export function QuickActionsMenu({
           locale
         }
         isOpen={
-          isAssistantOpen
-          && !isAuthenticationOpen
+          isAssistantPanelVisible
         }
         onClose={
           closeAssistant

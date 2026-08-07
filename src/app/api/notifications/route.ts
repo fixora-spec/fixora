@@ -3,6 +3,10 @@ import {
 } from "next/server";
 
 import {
+  DatabaseError,
+} from "@/lib/database";
+
+import {
   countUnreadNotifications,
   listAccountNotifications,
 } from "@/lib/auth/notification.repository";
@@ -255,6 +259,39 @@ function serializeNotification(
   };
 }
 
+function logNotificationLoadError(
+  error: unknown,
+): void {
+  if (process.env.NODE_ENV === "production") {
+    return;
+  }
+
+  if (error instanceof DatabaseError) {
+    const originalMessage =
+      error.originalError instanceof Error
+        ? error.originalError.message
+        : undefined;
+
+    console.error(
+      "[Fixora][notifications] No se pudieron cargar las notificaciones.",
+      {
+        code: error.details.code,
+        originalCode: error.details.originalCode,
+        constraintName: error.details.constraintName,
+        message: error.details.message,
+        originalMessage,
+      },
+    );
+
+    return;
+  }
+
+  console.error(
+    "[Fixora][notifications] No se pudieron cargar las notificaciones.",
+    error,
+  );
+}
+
 export async function GET(
   request: Request,
 ): Promise<NextResponse> {
@@ -341,7 +378,9 @@ export async function GET(
       notifications: notifications.map(serializeNotification),
       unreadCount,
     });
-  } catch {
+  } catch (error) {
+    logNotificationLoadError(error);
+
     return createErrorResponse(
       500,
       "NOTIFICATIONS_LOAD_FAILED",

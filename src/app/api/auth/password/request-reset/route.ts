@@ -212,6 +212,117 @@ async function consumeRequestLimits(
   };
 }
 
+type SafeErrorDetails = {
+  name?: string;
+  message?: string;
+  code?: string | number;
+  number?: number;
+  constraint?: string;
+};
+
+function readSafeErrorDetails(
+  value: unknown,
+): SafeErrorDetails | null {
+  if (
+    typeof value !== "object"
+    || value === null
+  ) {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  const details: SafeErrorDetails = {};
+
+  if (typeof record.name === "string") {
+    details.name = record.name;
+  }
+
+  if (typeof record.message === "string") {
+    details.message = record.message;
+  }
+
+  if (
+    typeof record.code === "string"
+    || typeof record.code === "number"
+  ) {
+    details.code = record.code;
+  }
+
+  if (typeof record.number === "number") {
+    details.number = record.number;
+  }
+
+  if (typeof record.constraint === "string") {
+    details.constraint = record.constraint;
+  }
+
+  return Object.keys(details).length > 0
+    ? details
+    : null;
+}
+
+function getSafeErrorChain(
+  error: unknown,
+): readonly SafeErrorDetails[] {
+  const chain: SafeErrorDetails[] = [];
+  const visited = new Set<unknown>();
+  let current: unknown = error;
+
+  for (let depth = 0; depth < 6; depth += 1) {
+    if (
+      typeof current !== "object"
+      || current === null
+      || visited.has(current)
+    ) {
+      break;
+    }
+
+    visited.add(current);
+
+    const details = readSafeErrorDetails(current);
+
+    if (details) {
+      chain.push(details);
+    }
+
+    const record = current as Record<string, unknown>;
+
+    if (
+      typeof record.originalError === "object"
+      && record.originalError !== null
+    ) {
+      current = record.originalError;
+      continue;
+    }
+
+    if (
+      typeof record.cause === "object"
+      && record.cause !== null
+    ) {
+      current = record.cause;
+      continue;
+    }
+
+    break;
+  }
+
+  return chain;
+}
+
+function logInternalError(
+  stage: string,
+  error: unknown,
+): void {
+  if (process.env.NODE_ENV === "production") {
+    return;
+  }
+
+  console.error(
+    `[Fixora][password-reset/request][${stage}]`,
+    getSafeErrorChain(error),
+  );
+}
+
 export async function POST(
   request: Request,
 ): Promise<NextResponse> {
@@ -228,6 +339,11 @@ export async function POST(
         message: fallbackMessages.forbiddenOrigin,
       });
     }
+
+    logInternalError(
+      "origin",
+      error,
+    );
 
     return createApiErrorResponse({
       status: 500,
@@ -258,6 +374,11 @@ export async function POST(
       });
     }
 
+    logInternalError(
+      "body",
+      error,
+    );
+
     return createApiErrorResponse({
       status: 500,
       code: "INTERNAL_ERROR",
@@ -279,6 +400,11 @@ export async function POST(
         error.fieldErrors,
       );
     }
+
+    logInternalError(
+      "validation",
+      error,
+    );
 
     return createApiErrorResponse({
       status: 500,
@@ -319,7 +445,12 @@ export async function POST(
     );
 
     return createApiSuccessResponse(result);
-  } catch {
+  } catch (error) {
+    logInternalError(
+      "rate-limit-or-service",
+      error,
+    );
+
     return createApiErrorResponse({
       status: 500,
       code: "INTERNAL_ERROR",

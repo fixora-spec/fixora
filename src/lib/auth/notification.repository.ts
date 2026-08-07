@@ -434,25 +434,41 @@ function mapNotificationRecord(
     "created_at",
   );
 
-  const readAt = record.read_at === null
+  const storedReadAt = record.read_at === null
     ? null
     : validateDate(record.read_at, "read_at");
 
-  if (
-    readAt !== null
-    && readAt.getTime() < createdAt.getTime()
-  ) {
-    throw new Error(
-      "La fecha de lectura de la notificación no es válida.",
-    );
-  }
+  /*
+   * Las versiones anteriores permitían texto libre en estos campos. Al leer
+   * datos existentes se normaliza sin aplicar las reglas estrictas reservadas
+   * para nuevas escrituras, evitando que una fila antigua derribe toda la lista.
+   */
+  const legacyCompatibleType = normalizeRequiredText(
+    record.notification_type,
+    "notification_type",
+    80,
+  ).toUpperCase();
+
+  const readAt =
+    storedReadAt !== null
+    && storedReadAt.getTime() < createdAt.getTime()
+      ? createdAt
+      : storedReadAt;
 
   return {
     notificationId,
     accountId,
-    type: normalizeNotificationType(record.notification_type),
-    titleKey: normalizeTranslationKey(record.title_key, "title_key"),
-    messageKey: normalizeTranslationKey(record.message_key, "message_key"),
+    type: legacyCompatibleType,
+    titleKey: normalizeRequiredText(
+      record.title_key,
+      "title_key",
+      200,
+    ),
+    messageKey: normalizeRequiredText(
+      record.message_key,
+      "message_key",
+      200,
+    ),
     metadata: parseMetadata(record.metadata_json),
     createdAt,
     readAt,

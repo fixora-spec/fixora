@@ -5,6 +5,7 @@ import {
   useEffect,
   useId,
   useMemo,
+  useRef,
 } from "react";
 
 import {
@@ -74,6 +75,11 @@ export function NotificationsPanel({
   const resolvedPanelId =
     panelId
     ?? `notifications-panel-${generatedPanelId}`;
+
+  const panelReference =
+    useRef<HTMLElement | null>(
+      null,
+    );
 
   const {
     notifications,
@@ -168,6 +174,53 @@ export function NotificationsPanel({
         return undefined;
       }
 
+      const previouslyFocusedElement =
+        document.activeElement
+          instanceof HTMLElement
+          ? document.activeElement
+          : null;
+
+      panelReference.current
+        ?.focus();
+
+      return () => {
+        previouslyFocusedElement
+          ?.focus();
+      };
+    },
+    [
+      open,
+    ],
+  );
+
+  useEffect(
+    () => {
+      if (!open) {
+        return undefined;
+      }
+
+      const previousOverflow =
+        document.body.style.overflow;
+
+      document.body.style.overflow =
+        "hidden";
+
+      return () => {
+        document.body.style.overflow =
+          previousOverflow;
+      };
+    },
+    [
+      open,
+    ],
+  );
+
+  useEffect(
+    () => {
+      if (!open) {
+        return undefined;
+      }
+
       const handleKeyDown =
         (
           event:
@@ -208,12 +261,27 @@ export function NotificationsPanel({
 
   return (
     <section
+      ref={
+        panelReference
+      }
       id={resolvedPanelId}
+      role="dialog"
+      tabIndex={-1}
+      aria-modal="true"
       aria-labelledby={
         `${resolvedPanelId}-title`
       }
       aria-busy={loading}
       data-notifications-panel=""
+      data-notifications-open="true"
+      className={[
+        "fixed inset-0 z-[100]",
+        "overflow-y-auto overscroll-contain",
+        "bg-[var(--fixora-background)]",
+        "text-[var(--fixora-foreground)]",
+      ].join(
+        " ",
+      )}
     >
       <header>
         <h2
