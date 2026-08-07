@@ -351,7 +351,7 @@
     },
     "passwordReset": {
       "title": "Crear nueva contraseña",
-      "description": "Confirma el código de recuperación y establece una contraseña nueva.",
+      "description": "Ingresa y confirma tu nueva contraseña para proteger tu cuenta.",
       "email": {
         "label": "Correo electrónico",
         "placeholder": "nombre@correo.com"
@@ -368,7 +368,9 @@
           "weak": "Débil",
           "medium": "Media",
           "strong": "Fuerte"
-        }
+        },
+        "show": "Mostrar contraseña",
+        "hide": "Ocultar contraseña"
       },
       "passwordConfirmation": {
         "label": "Repetir contraseña",
@@ -392,6 +394,15 @@
         "passwordsDoNotMatch": "Las contraseñas no coinciden.",
         "invalidField": "Revisa este campo.",
         "reviewFields": "Revisa los campos marcados antes de continuar."
+      },
+      "requirements": {
+        "title": "La contraseña debe contener:",
+        "minimumLength": "Al menos {count} caracteres",
+        "uppercase": "Una letra mayúscula",
+        "lowercase": "Una letra minúscula",
+        "number": "Un número",
+        "symbol": "Un carácter especial",
+        "noWhitespace": "Sin espacios"
       }
     },
     "adminSignIn": {

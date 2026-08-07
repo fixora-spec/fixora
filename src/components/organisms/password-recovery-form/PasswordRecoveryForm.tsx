@@ -18,6 +18,17 @@ import {
 } from "next-intl";
 
 import {
+  CircleAlert,
+  LoaderCircle,
+  Mail,
+  ShieldCheck,
+} from "lucide-react";
+
+import {
+  VerificationCodeField,
+} from "@/components/molecules/verification-code-field";
+
+import {
   useVerificationCountdown,
 } from "@/hooks/use-verification-countdown";
 
@@ -46,6 +57,23 @@ const VERIFICATION_CODE_LENGTH = 6;
 const VERIFICATION_CODE_PATTERN =
   /^[A-Z0-9]{6}$/u;
 
+const VERIFICATION_ANIMATION_MINIMUM_MILLISECONDS =
+  3000;
+
+const VERIFICATION_SUCCESS_HOLD_MILLISECONDS =
+  1400;
+
+function waitForMilliseconds(
+  duration: number,
+): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(
+      resolve,
+      duration,
+    );
+  });
+}
+
 function isSupportedLocale(
   value: string,
 ): value is Locale {
@@ -67,6 +95,10 @@ function isAbortError(
 const FALLBACK_CODE_TTL_MILLISECONDS = 10 * 60 * 1_000;
 const FALLBACK_RESEND_DELAY_MILLISECONDS = 60 * 1_000;
 
+function getCurrentTimestamp(): number {
+  return Date.now();
+}
+
 function normalizeEmail(
   value: string,
 ): string {
@@ -74,6 +106,45 @@ function normalizeEmail(
     .trim()
     .normalize("NFC")
     .toLowerCase();
+}
+
+function maskEmailAddress(
+  value: string,
+): string {
+  const normalizedEmail =
+    value.trim();
+
+  const separatorIndex =
+    normalizedEmail.lastIndexOf("@");
+
+  if (
+    separatorIndex <= 0
+    || separatorIndex === normalizedEmail.length - 1
+  ) {
+    return normalizedEmail;
+  }
+
+  const localPart =
+    normalizedEmail.slice(
+      0,
+      separatorIndex,
+    );
+
+  const domain =
+    normalizedEmail.slice(
+      separatorIndex + 1,
+    );
+
+  const visibleCharacterCount =
+    Math.min(
+      3,
+      Math.max(
+        1,
+        localPart.length,
+      ),
+    );
+
+  return `${localPart.slice(0, visibleCharacterCount)}***@${domain}`;
 }
 
 function normalizeVerificationCode(
@@ -388,6 +459,11 @@ export function PasswordRecoveryForm({
       email,
     );
 
+  const maskedEmail =
+    maskEmailAddress(
+      normalizedEmail,
+    );
+
   const emailInputId =
     `${resolvedFormId}-email`;
 
@@ -504,12 +580,18 @@ export function PasswordRecoveryForm({
 
   const handleCodeChange =
     (
-      event:
-        ChangeEvent<HTMLInputElement>,
+      eventOrCode:
+        ChangeEvent<HTMLInputElement>
+        | string,
     ): void => {
+      const nextValue =
+        typeof eventOrCode === "string"
+          ? eventOrCode
+          : eventOrCode.target.value;
+
       setCode(
         normalizeVerificationCode(
-          event.target.value,
+          nextValue,
         ),
       );
 
@@ -595,7 +677,7 @@ export function PasswordRecoveryForm({
           return false;
         }
 
-        const responseReceivedAt = Date.now();
+        const responseReceivedAt = getCurrentTimestamp();
 
         setCodeExpiresAt(
           result.expiresAt
@@ -815,24 +897,38 @@ export function PasswordRecoveryForm({
       );
 
       try {
-        const result =
-          await verifyPasswordResetCode(
-            {
-              email:
-                normalizedEmail,
+        const [verificationOutcome] =
+          await Promise.all([
+            verifyPasswordResetCode(
+              {
+                email:
+                  normalizedEmail,
 
-              accountRole,
+                accountRole,
 
-              code,
+                code,
 
-              locale:
-                resolvedLocale,
-            },
-            {
-              signal:
-                abortController.signal,
-            },
-          );
+                locale:
+                  resolvedLocale,
+              },
+              {
+                signal:
+                  abortController.signal,
+              },
+            ).then(
+              (result) => ({
+                ok: true as const,
+                result,
+              }),
+              (error: unknown) => ({
+                ok: false as const,
+                error,
+              }),
+            ),
+            waitForMilliseconds(
+              VERIFICATION_ANIMATION_MINIMUM_MILLISECONDS,
+            ),
+          ]);
 
         if (
           !mountedReference.current
@@ -841,6 +937,35 @@ export function PasswordRecoveryForm({
         ) {
           return;
         }
+
+        if (!verificationOutcome.ok) {
+          if (
+            isAbortError(
+              verificationOutcome.error,
+            )
+          ) {
+            return;
+          }
+
+          setStatus(
+            "ERROR",
+          );
+
+          setErrorMessage(
+            getRecoveryErrorMessage(
+              verificationOutcome.error,
+              translations(
+                "errors.verificationFailed",
+              ),
+            ),
+          );
+
+          return;
+        }
+
+        const {
+          result,
+        } = verificationOutcome;
 
         stopExpirationCountdown();
         stopResendCountdown();
@@ -859,6 +984,18 @@ export function PasswordRecoveryForm({
           ),
         );
 
+        await waitForMilliseconds(
+          VERIFICATION_SUCCESS_HOLD_MILLISECONDS,
+        );
+
+        if (
+          !mountedReference.current
+          || verificationAbortControllerReference.current !== abortController
+          || abortController.signal.aborted
+        ) {
+          return;
+        }
+
         onCodeVerified?.(
           result,
         );
@@ -874,27 +1011,6 @@ export function PasswordRecoveryForm({
             "PASSWORD_RESET",
           );
         }
-      } catch (error) {
-        if (
-          isAbortError(error)
-          || !mountedReference.current
-          || verificationAbortControllerReference.current !== abortController
-        ) {
-          return;
-        }
-
-        setStatus(
-          "ERROR",
-        );
-
-        setErrorMessage(
-          getRecoveryErrorMessage(
-            error,
-            translations(
-              "errors.verificationFailed",
-            ),
-          ),
-        );
       } finally {
         if (
           verificationAbortControllerReference.current
@@ -981,12 +1097,8 @@ export function PasswordRecoveryForm({
     return (
       <form
         id={resolvedFormId}
-        onSubmit={
-          handleRequestSubmit
-        }
-        aria-busy={
-          requestingCode
-        }
+        onSubmit={handleRequestSubmit}
+        aria-busy={requestingCode}
         aria-describedby={
           errorMessage
           || requestRateLimited
@@ -994,26 +1106,49 @@ export function PasswordRecoveryForm({
             : undefined
         }
         noValidate
+        className={[
+          "relative mx-auto flex w-[min(100%,25rem)] flex-col overflow-hidden",
+          "rounded-[1.65rem] border border-[var(--fixora-otp-card-border)]",
+          "bg-[var(--fixora-otp-card)] text-[var(--fixora-foreground)]",
+          "px-[clamp(1rem,5vw,2.25rem)] py-[clamp(1.35rem,4.5vw,2.35rem)]",
+          "shadow-[var(--fixora-otp-card-shadow)]",
+        ].join(" ")}
       >
-        <header>
-          <h1>
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute -top-[4.2rem] -right-[4.1rem] size-[8.7rem] rounded-full border border-[var(--fixora-otp-decoration-border)] bg-[var(--fixora-otp-card)] shadow-[var(--fixora-otp-decoration-shadow)]"
+        />
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute -bottom-[5.4rem] -left-[5.2rem] size-[10.4rem] rounded-full border border-[var(--fixora-otp-decoration-border)] bg-[var(--fixora-otp-card)] shadow-[var(--fixora-otp-decoration-shadow)]"
+        />
+
+        <header className="relative z-10 text-center">
+          <span className="mx-auto flex size-10 items-center justify-center rounded-full border border-[var(--fixora-otp-card-border)] bg-[var(--fixora-otp-surface-muted)] text-[var(--fixora-green)] shadow-[var(--fixora-otp-box-shadow)]">
+            <Mail
+              aria-hidden="true"
+              className="size-[1.05rem]"
+              strokeWidth={1.8}
+            />
+          </span>
+
+          <h1 className="mt-4 text-[clamp(1.1rem,5vw,1.48rem)] font-black tracking-[-0.035em]">
             {translations(
               "request.title",
             )}
           </h1>
 
-          <p>
+          <p className="mx-auto mt-3 max-w-[19rem] text-[clamp(0.76rem,3.2vw,0.9rem)] leading-relaxed text-[var(--fixora-foreground-muted)]">
             {translations(
               "request.description",
             )}
           </p>
         </header>
 
-        <div>
+        <div className="relative z-10 mt-6">
           <label
-            htmlFor={
-              emailInputId
-            }
+            htmlFor={emailInputId}
+            className="mb-2 block text-[0.72rem] font-semibold text-[var(--fixora-foreground-muted)]"
           >
             {translations(
               "email.label",
@@ -1028,13 +1163,17 @@ export function PasswordRecoveryForm({
             autoComplete="email"
             maxLength={320}
             value={email}
-            disabled={
-              controlsDisabled
-            }
+            disabled={controlsDisabled}
             required
-            onChange={
-              handleEmailChange
-            }
+            onChange={handleEmailChange}
+            className={[
+              "fixora-auth-email-input h-12 w-full rounded-[0.9rem] border border-[var(--fixora-otp-border)]",
+              "bg-[var(--fixora-auth-email-bg)] px-4 text-[0.88rem] text-[var(--fixora-foreground)] outline-none",
+              "shadow-[var(--fixora-otp-box-shadow)]",
+              "transition-[border-color,box-shadow] duration-200",
+              "focus:border-[var(--fixora-otp-active-border)] focus:shadow-[var(--fixora-otp-active-shadow)]",
+              "disabled:opacity-55",
+            ].join(" ")}
           />
         </div>
 
@@ -1043,8 +1182,14 @@ export function PasswordRecoveryForm({
             id={messageId}
             role="alert"
             aria-live="assertive"
+            className="relative z-10 mt-3 flex items-start justify-center gap-2 text-center text-[0.75rem] font-medium text-[var(--fixora-danger)]"
           >
-            {errorMessage}
+            <CircleAlert
+              aria-hidden="true"
+              className="mt-0.5 size-4 shrink-0"
+              strokeWidth={1.9}
+            />
+            <span>{errorMessage}</span>
           </p>
         ) : null}
 
@@ -1054,6 +1199,7 @@ export function PasswordRecoveryForm({
             id={messageId}
             role="alert"
             aria-live="polite"
+            className="relative z-10 mt-3 text-center text-[0.72rem] font-medium text-[var(--fixora-danger)]"
           >
             {rateLimitMessage}
             {" "}
@@ -1069,24 +1215,30 @@ export function PasswordRecoveryForm({
             controlsDisabled
             || requestRateLimited
           }
+          className="relative z-10 mt-6 flex h-[3.15rem] w-full items-center justify-center gap-2 rounded-[1rem] border border-[var(--fixora-otp-button-border)] bg-[var(--fixora-otp-button)] text-[0.88rem] font-semibold shadow-[var(--fixora-otp-button-shadow)] transition-[transform,box-shadow,opacity] duration-200 hover:-translate-y-px active:translate-y-0 disabled:pointer-events-none disabled:opacity-50 motion-reduce:transition-none motion-reduce:hover:translate-y-0"
         >
-          {requestingCode
-            ? translations(
-                "actions.requesting",
-              )
-            : translations(
-                "actions.requestCode",
-              )}
+          {requestingCode ? (
+            <LoaderCircle
+              aria-hidden="true"
+              className="size-4 animate-spin motion-reduce:animate-none"
+            />
+          ) : null}
+          <span>
+            {requestingCode
+              ? translations(
+                  "actions.requesting",
+                )
+              : translations(
+                  "actions.requestCode",
+                )}
+          </span>
         </button>
 
         <button
           type="button"
-          disabled={
-            controlsDisabled
-          }
-          onClick={
-            handleSignInRequest
-          }
+          disabled={controlsDisabled}
+          onClick={handleSignInRequest}
+          className="relative z-10 mt-4 text-center text-[0.7rem] font-medium text-[var(--fixora-foreground-muted)] transition-colors hover:text-[var(--fixora-green)] disabled:pointer-events-none disabled:opacity-40"
         >
           {translations(
             "actions.signIn",
@@ -1099,12 +1251,8 @@ export function PasswordRecoveryForm({
   return (
     <form
       id={resolvedFormId}
-      onSubmit={
-        handleVerifySubmit
-      }
-      aria-busy={
-        busy
-      }
+      onSubmit={handleVerifySubmit}
+      aria-busy={busy}
       aria-describedby={
         errorMessage
         || requestRateLimited
@@ -1112,66 +1260,70 @@ export function PasswordRecoveryForm({
           : undefined
       }
       noValidate
+      className={[
+        "relative mx-auto flex w-[min(100%,25rem)] flex-col overflow-hidden",
+        "rounded-[1.65rem] border border-[var(--fixora-otp-card-border)]",
+        "bg-[var(--fixora-otp-card)] text-[var(--fixora-foreground)]",
+        "px-[clamp(1rem,5vw,2.25rem)] py-[clamp(1.35rem,4.5vw,2.35rem)]",
+        "shadow-[var(--fixora-otp-card-shadow)]",
+      ].join(" ")}
     >
-      <header>
-        <h1>
+      <span
+        aria-hidden="true"
+        className="pointer-events-none absolute -top-[4.2rem] -right-[4.1rem] size-[8.7rem] rounded-full border border-[var(--fixora-otp-decoration-border)] bg-[var(--fixora-otp-card)] shadow-[var(--fixora-otp-decoration-shadow)]"
+      />
+      <span
+        aria-hidden="true"
+        className="pointer-events-none absolute -bottom-[5.4rem] -left-[5.2rem] size-[10.4rem] rounded-full border border-[var(--fixora-otp-decoration-border)] bg-[var(--fixora-otp-card)] shadow-[var(--fixora-otp-decoration-shadow)]"
+      />
+
+      <header className="relative z-10 text-center">
+        <h1 className="text-[clamp(1.15rem,5vw,1.55rem)] font-black tracking-[-0.035em]">
           {translations(
             "verification.title",
           )}
         </h1>
 
-        <p>
+        <p className="mx-auto mt-4 max-w-[19rem] text-[clamp(0.78rem,3.3vw,0.94rem)] leading-relaxed text-[var(--fixora-foreground-muted)]">
           {translations(
             "verification.description",
           )}
         </p>
 
-        <p>
-          {normalizedEmail}
+        <p className="mt-2 break-all text-[clamp(0.88rem,3.7vw,1.02rem)] font-bold">
+          {maskedEmail}
         </p>
       </header>
 
-      <div>
-        <label
-          htmlFor={
-            codeInputId
-          }
-        >
-          {translations(
+      <div className="relative z-10 mt-[clamp(1.5rem,6vw,2.25rem)]">
+        <VerificationCodeField
+          fieldId={codeInputId}
+          name="verificationCode"
+          label={translations(
             "code.label",
           )}
-        </label>
-
-        <input
-          id={codeInputId}
-          name="verificationCode"
-          type="text"
-          inputMode="text"
-          autoComplete="one-time-code"
-          value={code}
-          minLength={
-            VERIFICATION_CODE_LENGTH
+          code={code}
+          codeLength={6}
+          autoFocus
+          visualState={
+            verifyingCode
+              ? "VERIFYING"
+              : status === "CODE_VERIFIED"
+                ? "SUCCESS"
+                : status === "ERROR"
+                  ? "ERROR"
+                  : "IDLE"
           }
-          maxLength={
-            VERIFICATION_CODE_LENGTH
-          }
-          pattern="[A-Z0-9]{6}"
-          disabled={
-            controlsDisabled
-          }
-          required
-          onChange={
-            handleCodeChange
-          }
+          disabled={controlsDisabled}
+          onCodeChange={handleCodeChange}
         />
       </div>
 
       {codeExpiresAt ? (
         <p
-          id={
-            expirationMessageId
-          }
+          id={expirationMessageId}
           aria-live="polite"
+          className="relative z-10 mt-3 text-center text-[0.7rem] text-[var(--fixora-foreground-muted)]"
         >
           {codeExpired
             ? translations(
@@ -1191,6 +1343,7 @@ export function PasswordRecoveryForm({
         <p
           role="status"
           aria-live="polite"
+          className="relative z-10 mt-3 text-center text-[0.72rem] font-medium text-[var(--fixora-green)]"
         >
           {informationMessage}
         </p>
@@ -1201,8 +1354,14 @@ export function PasswordRecoveryForm({
           id={messageId}
           role="alert"
           aria-live="assertive"
+          className="relative z-10 mt-3 flex items-start justify-center gap-2 text-center text-[0.75rem] font-medium text-[var(--fixora-danger)]"
         >
-          {errorMessage}
+          <CircleAlert
+            aria-hidden="true"
+            className="mt-0.5 size-4 shrink-0"
+            strokeWidth={1.9}
+          />
+          <span>{errorMessage}</span>
         </p>
       ) : null}
 
@@ -1212,6 +1371,7 @@ export function PasswordRecoveryForm({
           id={messageId}
           role="alert"
           aria-live="polite"
+          className="relative z-10 mt-3 text-center text-[0.72rem] font-medium text-[var(--fixora-danger)]"
         >
           {rateLimitMessage}
           {" "}
@@ -1230,86 +1390,102 @@ export function PasswordRecoveryForm({
             && codeExpired
           )
         }
+        className="relative z-10 mt-[clamp(1.25rem,5vw,1.8rem)] flex h-[3.15rem] w-full items-center justify-center gap-2 rounded-[1rem] border border-[var(--fixora-otp-button-border)] bg-[var(--fixora-otp-button)] text-[0.88rem] font-semibold shadow-[var(--fixora-otp-button-shadow)] transition-[transform,box-shadow,opacity] duration-200 hover:-translate-y-px active:translate-y-0 disabled:pointer-events-none disabled:opacity-50 motion-reduce:transition-none motion-reduce:hover:translate-y-0"
       >
-        {verifyingCode
-          ? translations(
-              "actions.verifying",
-            )
-          : translations(
-              "actions.verifyCode",
-            )}
+        {verifyingCode ? (
+          <LoaderCircle
+            aria-hidden="true"
+            className="size-4 animate-spin motion-reduce:animate-none"
+          />
+        ) : null}
+        <span>
+          {verifyingCode
+            ? translations(
+                "actions.verifying",
+              )
+            : translations(
+                "actions.verifyCode",
+              )}
+        </span>
       </button>
 
-      <button
-        type="button"
-        disabled={
-          controlsDisabled
-          || requestRateLimited
-          || !resendAvailable
-        }
-        onClick={
-          () => {
-            void handleResend();
+      <div className="relative z-10 mt-4 text-center">
+        <button
+          type="button"
+          disabled={
+            controlsDisabled
+            || requestRateLimited
+            || !resendAvailable
           }
-        }
-      >
-        {requestingCode
-          ? translations(
-              "actions.requesting",
-            )
-          : translations(
-              "actions.resendCode",
-            )}
-      </button>
-
-      {!resendAvailable ? (
-        <p
-          id={resendMessageId}
-          aria-live="polite"
+          onClick={
+            () => {
+              void handleResend();
+            }
+          }
+          className="text-[0.78rem] font-semibold text-[var(--fixora-green)] transition-opacity hover:opacity-75 disabled:pointer-events-none disabled:opacity-40"
         >
-          {translations(
-            "verification.resendAvailableIn",
-            {
-              time:
-                resendFormattedTime,
-            },
-          )}
-        </p>
-      ) : null}
+          {requestingCode
+            ? translations(
+                "actions.requesting",
+              )
+            : translations(
+                "actions.resendCode",
+              )}
+        </button>
 
-      <p>
-        {translations(
-          "securityNotice",
-        )}
+        {!resendAvailable ? (
+          <p
+            id={resendMessageId}
+            aria-live="polite"
+            className="mt-1.5 text-[0.68rem] text-[var(--fixora-foreground-muted)]"
+          >
+            {translations(
+              "verification.resendAvailableIn",
+              {
+                time:
+                  resendFormattedTime,
+              },
+            )}
+          </p>
+        ) : null}
+      </div>
+
+      <p className="relative z-10 mt-4 flex items-start justify-center gap-2 text-center text-[0.64rem] leading-relaxed text-[var(--fixora-foreground-muted)]">
+        <ShieldCheck
+          aria-hidden="true"
+          className="mt-0.5 size-3.5 shrink-0 text-[var(--fixora-green)]"
+          strokeWidth={1.8}
+        />
+        <span>
+          {translations(
+            "securityNotice",
+          )}
+        </span>
       </p>
 
-      <button
-        type="button"
-        disabled={
-          controlsDisabled
-        }
-        onClick={
-          handleChangeEmail
-        }
-      >
-        {translations(
-          "actions.changeEmail",
-        )}
-      </button>
+      <div className="relative z-10 mt-4 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-[0.68rem]">
+        <button
+          type="button"
+          disabled={controlsDisabled}
+          onClick={handleChangeEmail}
+          className="font-medium text-[var(--fixora-foreground-muted)] transition-colors hover:text-[var(--fixora-green)] disabled:pointer-events-none disabled:opacity-40"
+        >
+          {translations(
+            "actions.changeEmail",
+          )}
+        </button>
 
-      <button
-        type="button"
-        disabled={
-          controlsDisabled
-        }
-        onClick={
-          handleSignInRequest
-        }
-      >
-        {translations(
-          "actions.signIn",
-        )}
-      </button>
+        <button
+          type="button"
+          disabled={controlsDisabled}
+          onClick={handleSignInRequest}
+          className="font-medium text-[var(--fixora-foreground-muted)] transition-colors hover:text-[var(--fixora-green)] disabled:pointer-events-none disabled:opacity-40"
+        >
+          {translations(
+            "actions.signIn",
+          )}
+        </button>
+      </div>
     </form>
   );
 }

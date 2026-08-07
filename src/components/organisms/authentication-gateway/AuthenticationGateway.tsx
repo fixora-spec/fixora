@@ -14,6 +14,10 @@ import {
 } from "next-intl";
 
 import {
+  X,
+} from "lucide-react";
+
+import {
   AdminSignInForm,
 } from "@/components/organisms/admin-sign-in-form";
 
@@ -1274,6 +1278,9 @@ export function AuthenticationGateway({
         "overflow-y-auto overscroll-contain",
         "bg-[var(--fixora-background)]",
         "text-[var(--fixora-foreground)]",
+        shellConfiguration
+          ? ""
+          : "flex min-h-dvh items-center justify-center px-2.5 py-3 min-[380px]:px-4 min-[380px]:py-4 sm:px-6 sm:py-6",
       ].join(
         " ",
       )}
@@ -1314,7 +1321,15 @@ export function AuthenticationGateway({
         </AuthenticationShell>
       ) : (
         <>
-          <header>
+          <header
+            className={[
+              "pointer-events-none fixed inset-x-0 top-0 z-[120]",
+              "flex justify-end p-3",
+              "min-[380px]:p-4 sm:p-5 lg:p-6",
+            ].join(
+              " ",
+            )}
+          >
             <button
               type="button"
               onClick={
@@ -1325,10 +1340,32 @@ export function AuthenticationGateway({
                   "close",
                 )
               }
-            >
-              {translations(
-                "close",
+              title={
+                translations(
+                  "close",
+                )
+              }
+              className={[
+                "pointer-events-auto inline-flex size-10 items-center justify-center",
+                "rounded-full border border-[var(--fixora-otp-card-border)]",
+                "bg-[var(--fixora-otp-card)] text-[var(--fixora-foreground)]",
+                "shadow-[var(--fixora-otp-button-shadow)]",
+                "transition-[transform,box-shadow,color,background-color] duration-200",
+                "hover:text-[var(--fixora-green)] hover:scale-[1.04]",
+                "active:scale-95",
+                "focus-visible:outline-none focus-visible:ring-2",
+                "focus-visible:ring-[var(--fixora-green)]/45 focus-visible:ring-offset-2",
+                "focus-visible:ring-offset-[var(--fixora-background)]",
+                "motion-reduce:transition-none motion-reduce:hover:scale-100",
+              ].join(
+                " ",
               )}
+            >
+              <X
+                aria-hidden="true"
+                className="size-[1.1rem]"
+                strokeWidth={1.8}
+              />
             </button>
           </header>
 

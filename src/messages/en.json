@@ -351,7 +351,7 @@
     },
     "passwordReset": {
       "title": "Create new password",
-      "description": "Confirm the recovery code and set a new password.",
+      "description": "Enter and confirm your new password to secure your account.",
       "email": {
         "label": "Email address",
         "placeholder": "name@example.com"
@@ -368,7 +368,9 @@
           "weak": "Weak",
           "medium": "Medium",
           "strong": "Strong"
-        }
+        },
+        "show": "Show password",
+        "hide": "Hide password"
       },
       "passwordConfirmation": {
         "label": "Repeat password",
@@ -392,6 +394,15 @@
         "passwordsDoNotMatch": "The passwords do not match.",
         "invalidField": "Review this field.",
         "reviewFields": "Review the marked fields before continuing."
+      },
+      "requirements": {
+        "title": "Password must contain:",
+        "minimumLength": "At least {count} characters",
+        "uppercase": "One uppercase letter",
+        "lowercase": "One lowercase letter",
+        "number": "One number",
+        "symbol": "One special character",
+        "noWhitespace": "No spaces"
       }
     },
     "adminSignIn": {

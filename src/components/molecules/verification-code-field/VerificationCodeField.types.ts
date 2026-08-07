@@ -9,6 +9,12 @@ export type VerificationCodeFieldStatus =
   | "COMPLETE"
   | "INVALID";
 
+export type VerificationCodeVisualState =
+  | "IDLE"
+  | "VERIFYING"
+  | "SUCCESS"
+  | "ERROR";
+
 export type VerificationCodeFieldProps =
   Omit<
     InputHTMLAttributes<HTMLInputElement>,
@@ -42,6 +48,9 @@ export type VerificationCodeFieldProps =
       string;
 
     codeLength?: 6;
+
+    visualState?:
+      VerificationCodeVisualState;
 
     onCodeChange: (
       code: string,

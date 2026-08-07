@@ -18,6 +18,62 @@
 
   --fixora-border: rgb(57 57 57 / 10%);
   --fixora-shadow: rgb(57 57 57 / 12%);
+
+  --fixora-danger: #a54646;
+
+  --fixora-auth-email-bg: #f7faf6;
+  --fixora-auth-email-active-bg: #f1faee;
+  --fixora-auth-email-placeholder: #8b918b;
+
+  --fixora-otp-card: #ffffff;
+  --fixora-otp-surface-muted: #f4f6f3;
+  --fixora-otp-card-border: rgb(57 57 57 / 7%);
+  --fixora-otp-card-shadow:
+    -10px -10px 24px rgb(255 255 255 / 90%),
+    13px 15px 28px rgb(57 57 57 / 14%),
+    inset 1px 1px 0 rgb(255 255 255 / 94%);
+
+  --fixora-otp-decoration-border: rgb(57 57 57 / 7%);
+  --fixora-otp-decoration-shadow:
+    inset 13px 15px 27px rgb(57 57 57 / 13%),
+    inset -12px -12px 25px rgb(255 255 255 / 92%);
+
+  --fixora-otp-box: #fdfefe;
+  --fixora-otp-border: rgb(57 57 57 / 12%);
+  --fixora-otp-active-border: #4ead35;
+  --fixora-otp-error-border: #a54646;
+  --fixora-otp-glow: rgb(78 173 53 / 30%);
+  --fixora-otp-error-glow: rgb(165 70 70 / 24%);
+  --fixora-otp-line: #57af33;
+  --fixora-otp-center-glow: rgb(78 173 53 / 44%);
+  --fixora-otp-box-shadow:
+    -2px -2px 6px rgb(255 255 255 / 96%),
+    4px 5px 9px rgb(57 57 57 / 13%);
+  --fixora-otp-active-shadow:
+    0 0 0 1px rgb(78 173 53 / 15%),
+    0 0 11px rgb(78 173 53 / 22%),
+    -2px -2px 6px rgb(255 255 255 / 96%),
+    4px 5px 9px rgb(57 57 57 / 13%);
+  --fixora-otp-node-shadow:
+    0 0 14px rgb(78 173 53 / 22%),
+    -3px -3px 7px rgb(255 255 255 / 92%),
+    4px 5px 10px rgb(57 57 57 / 15%);
+
+  --fixora-otp-button: #f7f9f6;
+  --fixora-otp-button-border: rgb(57 57 57 / 9%);
+  --fixora-otp-button-shadow:
+    -5px -5px 12px rgb(255 255 255 / 94%),
+    7px 8px 15px rgb(57 57 57 / 17%),
+    inset 1px 1px 1px rgb(255 255 255 / 80%);
+  --fixora-otp-error-button-shadow:
+    0 0 0 1px rgb(165 70 70 / 8%),
+    0 0 12px rgb(165 70 70 / 10%),
+    -5px -5px 12px rgb(255 255 255 / 90%),
+    7px 8px 15px rgb(57 57 57 / 16%);
+  --fixora-otp-success-button-shadow:
+    0 9px 18px rgb(56 169 55 / 28%),
+    inset 0 1px 0 rgb(255 255 255 / 25%),
+    inset 0 -2px 5px rgb(24 108 28 / 22%);
 }
 
 html.dark {
@@ -36,6 +92,63 @@ html.dark {
 
   --fixora-border: rgb(255 255 255 / 10%);
   --fixora-shadow: rgb(0 0 0 / 38%);
+
+  --fixora-danger: #ee7a7a;
+
+  --fixora-auth-email-bg: #151815;
+  --fixora-auth-email-active-bg: #172116;
+  --fixora-auth-email-placeholder: #7f887f;
+
+  --fixora-otp-card: #151815;
+  --fixora-otp-surface-muted: #1c201c;
+  --fixora-otp-card-border: rgb(255 255 255 / 9%);
+  --fixora-otp-card-shadow:
+    -8px -8px 22px rgb(255 255 255 / 2%),
+    14px 17px 34px rgb(0 0 0 / 58%),
+    inset 1px 1px 0 rgb(255 255 255 / 3.2%);
+
+  --fixora-otp-decoration-border: rgb(255 255 255 / 8%);
+  --fixora-otp-decoration-shadow:
+    inset 18px 20px 35px rgb(0 0 0 / 66%),
+    inset -9px -9px 22px rgb(255 255 255 / 2.2%);
+
+  --fixora-otp-box: #151815;
+  --fixora-otp-border: rgb(255 255 255 / 11%);
+  --fixora-otp-active-border: #6ac447;
+  --fixora-otp-error-border: #ee7a7a;
+  --fixora-otp-glow: rgb(106 196 71 / 46%);
+  --fixora-otp-error-glow: rgb(238 122 122 / 30%);
+  --fixora-otp-line: #63bd3d;
+  --fixora-otp-center-glow: rgb(106 196 71 / 52%);
+  --fixora-otp-box-shadow:
+    -2px -2px 6px rgb(255 255 255 / 2.3%),
+    4px 5px 10px rgb(0 0 0 / 60%);
+  --fixora-otp-active-shadow:
+    0 0 0 1px rgb(106 196 71 / 16%),
+    0 0 14px rgb(106 196 71 / 36%),
+    -2px -2px 6px rgb(255 255 255 / 2.4%),
+    4px 5px 10px rgb(0 0 0 / 62%);
+  --fixora-otp-node-shadow:
+    0 0 18px rgb(106 196 71 / 38%),
+    -3px -3px 7px rgb(255 255 255 / 2.2%),
+    5px 6px 12px rgb(0 0 0 / 64%);
+
+  --fixora-otp-button: #171a17;
+  --fixora-otp-button-border: rgb(255 255 255 / 9%);
+  --fixora-otp-button-shadow:
+    -5px -5px 12px rgb(255 255 255 / 2%),
+    8px 10px 18px rgb(0 0 0 / 65%),
+    inset 1px 1px 1px rgb(255 255 255 / 1.8%);
+  --fixora-otp-error-button-shadow:
+    0 0 0 1px rgb(238 122 122 / 8%),
+    0 0 13px rgb(238 122 122 / 12%),
+    -5px -5px 12px rgb(255 255 255 / 1.8%),
+    8px 10px 18px rgb(0 0 0 / 65%);
+  --fixora-otp-success-button-shadow:
+    0 0 18px rgb(106 196 71 / 24%),
+    0 10px 20px rgb(0 0 0 / 48%),
+    inset 0 1px 0 rgb(255 255 255 / 10%),
+    inset 0 -2px 6px rgb(0 0 0 / 24%);
 }
 
 *,
@@ -148,4 +261,104 @@ ol {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
   }
+}
+
+/* Authentication email field: prevent browser autofill from painting blue/white. */
+.fixora-auth-email-input {
+  background-color: var(--fixora-auth-email-bg);
+  color: var(--fixora-foreground);
+  caret-color: var(--fixora-green);
+  -webkit-text-fill-color: var(--fixora-foreground);
+}
+
+.fixora-auth-email-input::placeholder {
+  color: var(--fixora-auth-email-placeholder);
+  opacity: 1;
+}
+
+.fixora-auth-email-input:focus {
+  background-color: var(--fixora-auth-email-active-bg);
+}
+
+.fixora-auth-email-input:-webkit-autofill,
+.fixora-auth-email-input:-webkit-autofill:hover {
+  border-color: var(--fixora-otp-border) !important;
+  -webkit-text-fill-color: var(--fixora-foreground) !important;
+  caret-color: var(--fixora-green) !important;
+  -webkit-box-shadow:
+    0 0 0 1000px var(--fixora-auth-email-bg) inset,
+    var(--fixora-otp-box-shadow) !important;
+  box-shadow:
+    0 0 0 1000px var(--fixora-auth-email-bg) inset,
+    var(--fixora-otp-box-shadow) !important;
+  transition: background-color 99999s ease-out 0s;
+}
+
+.fixora-auth-email-input:-webkit-autofill:focus,
+.fixora-auth-email-input:-webkit-autofill:active {
+  border-color: var(--fixora-otp-active-border) !important;
+  -webkit-text-fill-color: var(--fixora-foreground) !important;
+  caret-color: var(--fixora-green) !important;
+  -webkit-box-shadow:
+    0 0 0 1000px var(--fixora-auth-email-active-bg) inset,
+    var(--fixora-otp-active-shadow) !important;
+  box-shadow:
+    0 0 0 1000px var(--fixora-auth-email-active-bg) inset,
+    var(--fixora-otp-active-shadow) !important;
+}
+
+.fixora-auth-email-input:autofill {
+  background-color: var(--fixora-auth-email-bg) !important;
+  color: var(--fixora-foreground) !important;
+}
+
+.fixora-auth-email-input:autofill:focus {
+  background-color: var(--fixora-auth-email-active-bg) !important;
+  border-color: var(--fixora-otp-active-border) !important;
+}
+
+
+
+/* Authentication password fields: preserve Fixora colors on browser autofill. */
+.fixora-auth-password-input {
+  background-color: var(--fixora-otp-box);
+  color: var(--fixora-foreground);
+  caret-color: var(--fixora-green);
+  -webkit-text-fill-color: var(--fixora-foreground);
+}
+
+.fixora-auth-password-input::placeholder {
+  color: var(--fixora-auth-email-placeholder);
+  opacity: 1;
+}
+
+.fixora-auth-password-input:-webkit-autofill,
+.fixora-auth-password-input:-webkit-autofill:hover {
+  -webkit-text-fill-color: var(--fixora-foreground) !important;
+  caret-color: var(--fixora-green) !important;
+  -webkit-box-shadow:
+    0 0 0 1000px var(--fixora-otp-box) inset,
+    var(--fixora-otp-box-shadow) !important;
+  box-shadow:
+    0 0 0 1000px var(--fixora-otp-box) inset,
+    var(--fixora-otp-box-shadow) !important;
+  transition: background-color 99999s ease-out 0s;
+}
+
+.fixora-auth-password-input:-webkit-autofill:focus,
+.fixora-auth-password-input:-webkit-autofill:active {
+  border-color: var(--fixora-otp-active-border) !important;
+  -webkit-text-fill-color: var(--fixora-foreground) !important;
+  caret-color: var(--fixora-green) !important;
+  -webkit-box-shadow:
+    0 0 0 1000px var(--fixora-otp-box) inset,
+    var(--fixora-otp-active-shadow) !important;
+  box-shadow:
+    0 0 0 1000px var(--fixora-otp-box) inset,
+    var(--fixora-otp-active-shadow) !important;
+}
+
+.fixora-auth-password-input:autofill {
+  background-color: var(--fixora-otp-box) !important;
+  color: var(--fixora-foreground) !important;
 }
